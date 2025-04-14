@@ -1,0 +1,130 @@
+# EpiBench
+
+EpiBench is a software tool designed for predicting DNA methylation levels using genomic sequence data and histone modification marks. It employs a multi-branch Convolutional Neural Network (CNN) architecture (`SeqCNNRegressor`) specifically tailored for integrating these data types to achieve high prediction accuracy.
+
+## Overview
+
+The tool encompasses a pipeline for:
+- **Data Processing:** Converting raw genomic data (bed, bigwig) into model-ready matrices.
+- **Model Training:** Training the `SeqCNNRegressor` model.
+- **Hyperparameter Optimization:** Using Optuna to find optimal model parameters.
+- **Evaluation:** Assessing model performance using various regression metrics.
+- **Prediction:** Generating methylation predictions on new data.
+- **Interpretation:** Understanding model predictions using Integrated Gradients.
+- **Comparative Analysis:** Comparing models trained/evaluated on different sample groups.
+
+It is primarily operated via a Command-Line Interface (CLI) (`epibench`).
+
+## Installation
+
+1.  **Clone the repository:**
+    ```bash
+    git clone <repository_url>
+    cd EpiBench
+    ```
+2.  **Set up a Python virtual environment (Recommended):**
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate  # Linux/macOS
+    # or ".venv\Scripts\activate" on Windows
+    ```
+3.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+4.  **Install EpiBench in development mode:**
+    ```bash
+    pip install -e .
+    ```
+    This allows you to modify the code and have the changes reflected immediately when running the `epibench` command.
+
+## Quick Start
+
+This guide helps you get EpiBench running quickly.
+
+1.  **Install EpiBench:** Follow the steps in the [Installation](#installation) section.
+
+2.  **Verify Installation:**
+    ```bash
+    epibench --version
+    epibench --help 
+    ```
+
+3.  **Explore Commands:** See what each command does:
+    ```bash
+    epibench process-data --help
+    epibench train --help
+    # ... and so on for evaluate, predict, interpret, compare
+    ```
+
+4.  **Review Example Configurations:** Look at the files in the `config/` directory (e.g., `config/process_config_example.yaml`, `config/train_config_example.yaml`) to understand the required parameters for different steps.
+
+5.  **Run a Basic Workflow (Tutorial):** Follow the steps in the [Training and Evaluating a Model Tutorial](docs/tutorial_train_evaluate.md) using the example configurations (you will need to replace placeholder paths with actual paths to data files).
+
+6.  **Run the Orchestration Script:** For a more automated run (after setting up configuration files), use the script:
+    ```bash
+    # Example for a single sample defined in args
+    python scripts/run_full_pipeline.py --output-dir ./quickstart_out --single-sample-name test_sample --process-data-config config/process_config_example.yaml --train-config config/train_config_example.yaml
+    
+    # Example using a multi-sample config file
+    python scripts/run_full_pipeline.py --output-dir ./quickstart_out --samples-config config/samples_config_example.yaml --max-workers 2
+    ```
+    *(Remember to replace placeholder paths in the config files with actual paths to your data before running)*.
+
+## Basic Usage Examples
+
+The `epibench` tool uses a command-line interface with several subcommands:
+
+*   **Process Data:**
+    ```bash
+    epibench process-data --config config/process_config.yaml -o output/processed_data
+    ```
+
+*   **Train Model:**
+    ```bash
+    epibench train --config config/train_config.yaml --output-dir output/training_run_01
+    ```
+
+*   **Evaluate Model:**
+    ```bash
+    epibench evaluate --config config/train_config.yaml --checkpoint output/training_run_01/best_model.pth --test-data output/processed_data/test.h5 -o output/evaluation_results
+    ```
+
+*   **Generate Predictions:**
+    ```bash
+    epibench predict --config config/train_config.yaml --checkpoint output/training_run_01/best_model.pth --input-data data/new_samples.h5 -o output/predictions
+    ```
+
+*   **Interpret Model:**
+    ```bash
+    epibench interpret --config config/train_config.yaml --checkpoint output/training_run_01/best_model.pth --input-data data/sample_to_interpret.h5 -o output/interpretation_results
+    ```
+
+*   **Compare Models/Groups:**
+    ```bash
+    epibench compare --config config/compare_config.yaml -o output/comparative_analysis
+    ```
+
+## Configuration
+
+EpiBench relies heavily on configuration files (YAML or JSON) to define parameters for data processing, model architecture, training, evaluation, etc. 
+
+Example configuration files can be found in the `config/` directory (or `examples/` - *to be created*).
+
+## Orchestration
+
+For running common end-to-end workflows (e.g., processing, training, evaluating, and predicting sequentially), you can use the provided orchestration scripts located in the `scripts/` directory.
+
+Example:
+```bash
+python scripts/run_full_pipeline.py --output-dir ./pipeline_runs --samples-config config/samples_to_run.yaml --max-workers 4
+```
+See `scripts/README.md` for detailed usage of the orchestration scripts.
+
+## Contributing
+
+*(Contribution guidelines to be added)*
+
+## License
+
+*(License information to be added) - Assuming MIT or similar based on setup.py*

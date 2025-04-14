@@ -1,0 +1,51 @@
+# Example Configuration for epibench compare
+
+# Base output directory for the comparative analysis report and plots.
+# This is often overridden by the CLI -o/--output-dir argument.
+output_dir: ./comparative_analysis_results
+
+# List of model configurations to compare.
+# Each entry needs enough info to load the model and its original training config.
+model_configs:
+  - name: Model_A_AML_Trained # A descriptive name for this model entry
+    config: path/to/training/output_model_A/train_config.yaml # Path to the config used to TRAIN this model
+    checkpoint: path/to/training/output_model_A/best_model.pth # Path to the specific checkpoint
+    
+  - name: Model_B_CD34_Trained
+    config: path/to/training/output_model_B/train_config.yaml
+    checkpoint: path/to/training/output_model_B/best_model.pth
+  
+  # Add more models trained under different conditions or with different architectures
+
+# Definition of sample groups and their corresponding TEST data.
+# The keys are the group names used in reports/plots.
+# The values point to the relevant test dataset for that group.
+sample_groups:
+  AML_Cells:
+    test: path/to/processed_data/aml_test.h5 # Test data specific to AML
+    # Optional: Add path to training data if needed for specific analyses
+    # train: path/to/processed_data/aml_train.h5 
+    
+  CD34_Cells:
+    test: path/to/processed_data/cd34_test.h5 # Test data specific to CD34
+
+  # Add more sample groups (e.g., different tissues, treatment conditions)
+
+# Analysis parameters
+analysis:
+  # List of metrics to compute during cross-sample evaluation.
+  # These should match metrics supported by epibench.evaluation.metrics.calculate_regression_metrics
+  metrics_to_compute: ["mse", "mae", "r2", "pearson", "spearman"]
+  
+  # Metric to use for the (placeholder) statistical comparisons and default plots.
+  comparison_metric: "pearson" # e.g., compare models based on Pearson correlation
+  
+  # Format for the generated summary report ('json', 'csv', 'md').
+  report_format: "md"
+  
+  # Whether to generate visualizations (e.g., box plots).
+  generate_plots: true
+  
+  # Optional: Specify a specific metric to plot if generate_plots is true.
+  # If not specified, the first metric from metrics_to_compute will be plotted.
+  # plot_metric: "r2" 

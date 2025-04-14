@@ -1,0 +1,66 @@
+# Example Configuration for epibench process-data
+
+# Input files required for processing
+input:
+  # Path to a BED file defining the genomic regions of interest.
+  regions_bed: path/to/your/genomic_regions.bed
+
+  # Option 1: Provide reference genome FASTA. The script will extract sequence context.
+  # sequence_fasta: path/to/reference_genome.fasta
+
+  # Option 2: Provide sequence context directly as BigWig tracks (if FASTA is not given).
+  # These should match the expected order (e.g., ATGC content, CpG density etc.) if not using FASTA.
+  # Ensure the number matches processing.num_tracks if specified directly.
+  tracks_bigwig: 
+    - path/to/track1_sequence_or_histone.bw
+    - path/to/track2_sequence_or_histone.bw
+    - path/to/track3_histone.bw
+    - path/to/track4_histone.bw
+    - path/to/track5_histone.bw
+    - path/to/track6_histone.bw
+    - path/to/track7_histone.bw
+    - path/to/track8_histone.bw
+    - path/to/track9_histone.bw
+    - path/to/track10_histone.bw
+    # The 11th track (index 10) is usually the target value
+
+  # Path to the BigWig file containing the target values (e.g., methylation levels) 
+  # that correspond to the regions_bed. This is usually the last track conceptually.
+  target_bigwig: path/to/methylation_target.bw 
+
+# Processing parameters
+processing:
+  # Size of the window around the center of each region defined in regions_bed.
+  window_size: 10000 
+  
+  # Total number of tracks expected in the output matrix (sequence context + histone marks).
+  # Should typically be 11 (e.g., 4 sequence + 6 histone + 1 target, but target is handled separately).
+  # If using FASTA, this is often implicitly handled (e.g., 4 sequence channels).
+  # Ensure consistency with the number of files in tracks_bigwig if not using FASTA for sequence context.
+  num_tracks: 11 
+
+  # Method for aggregating values within the window from BigWig tracks (mean, max, min, coverage, std).
+  aggregation_method: mean 
+
+splitting:
+  # Method for splitting data: 'chromosome' or 'random'.
+  method: chromosome
+  
+  # Required if method is 'chromosome'. List chromosomes for each split.
+  # Ensure all relevant chromosomes from regions_bed are assigned.
+  train_chroms: ["chr1", "chr3", "chr4", "chr5", "chr6", "chr7", "chr9", "chr10", "chr11", "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", "chr21", "chr22"]
+  val_chroms: ["chr8", "chrX"]
+  test_chroms: ["chr2"]
+
+  # Required if method is 'random'. Ratios for train/validation/test splits.
+  # split_ratios: [0.7, 0.15, 0.15]
+  
+  # Optional: Random seed for reproducibility if method is 'random'.
+  # random_seed: 42
+
+output:
+  # Format for saving the processed data matrices: 'hdf5' or 'parquet'.
+  format: hdf5
+  
+  # Optional: Compression level for HDF5 output.
+  # compression_level: 4 
