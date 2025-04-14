@@ -19,7 +19,7 @@ It is primarily operated via a Command-Line Interface (CLI) (`epibench`).
 
 1.  **Clone the repository:**
     ```bash
-    git clone <repository_url>
+    git clone https://github.com/Bonney96/epibench.git
     cd EpiBench
     ```
 2.  **Set up a Python virtual environment (Recommended):**
