@@ -1,0 +1,324 @@
+# Product Requirements Document: EpiBench
+
+## 1. Project Overview
+
+**Introduction:**
+EpiBench is a software tool designed for predicting DNA methylation levels using genomic sequence data and histone modification marks. It employs a multi-branch Convolutional Neural Network (CNN) architecture (`SeqCNNRegressor`) specifically tailored for integrating these data types to achieve high prediction accuracy. The tool encompasses a pipeline for data processing, model training, hyperparameter optimization, evaluation, interpretation, and comparative analysis, primarily operated via a Command-Line Interface (CLI).
+
+**Business Objectives & Goals:**
+- Provide researchers with an accurate and robust tool for predicting DNA methylation patterns.
+- Enable comparative analysis of methylation landscapes between different biological conditions or cell types (e.g., Acute Myeloid Leukemia (AML) vs. normal CD34+ cells).
+- Offer insights into model predictions through integrated interpretation methods (Integrated Gradients).
+- Facilitate reproducible research in epigenomics through a configurable and scriptable pipeline.
+- Accelerate the discovery of epigenetic biomarkers and mechanisms.
+
+**Problem Statement:**
+Predicting DNA methylation from sequence and histone data is computationally challenging due to the complexity and volume of genomic data. Researchers need efficient, accurate, and interpretable models to understand epigenetic regulation. Existing tools may lack integration of multiple data types, robust validation strategies (like leakage-free splitting), advanced optimization, or built-in interpretability features. EpiBench aims to address these gaps by providing a comprehensive, end-to-end pipeline.
+
+## 2. Scope and Objectives
+
+**In-Scope:**
+- **Data Processing:** Parsing and processing of raw genomic data (bigwig, bed formats) into (10000, 11) input matrices. Functions include `process_sample()`, `run_methfast()`, `calculate_confidence_intervals()`, `wilson_score_interval()`.
+- **Dataset Management:** `SequenceDataset` and `LeakageFreeSequenceDataset` implementations. Strict chromosome-based data splitting (configurable, default 70/15/15 train/val/test).
+- **Model Architecture:** `SeqCNNRegressor` multi-branch CNN implementation with configurable kernel sizes (3, 9, 25, 51) and layers.
+- **Training Pipeline:** Standard training loop, hyperparameter optimization using Optuna (tuning LR, WD, filters, FC units, dropout, batch norm), early stopping, GPU memory usage tracking/optimization, model checkpointing, parallel training support.
+- **Evaluation & Interpretation:** Calculation of standard regression metrics (MSE, R², etc.), performance visualization generation, model interpretation using Integrated Gradients, sequence motif discovery tools.
+- **Comparative Analysis:** Framework for training and comparing models across different sample groups (e.g., AML vs. CD34).
+- **Interface:** Command-Line Interface (CLI) for all pipeline stages, orchestration scripts for end-to-end runs, configuration file system for experiment management, logging.
+
+**Out-of-Scope:**
+- Graphical User Interface (GUI).
+- Real-time prediction API or web service deployment.
+- Direct integration with specific online genomic databases beyond file inputs.
+- Support for genomic data from species other than human (unless explicitly configured).
+- Advanced distributed computing frameworks (e.g., Spark, Dask) beyond multi-GPU parallelism on a single node or simple job submission.
+- Automated data quality control beyond basic format checking.
+
+**Measurable Objectives:**
+- Achieve a target R² score (e.g., > 0.7, to be benchmarked) on standard test datasets for methylation prediction.
+- Demonstrate statistically significant separation in comparative analyses (e.g., AML vs. CD34).
+- Process input data at a target rate (e.g., X samples/hour on specified hardware).
+- Ensure model interpretation outputs correlate with known biological motifs or features.
+- Maintain comprehensive test coverage (>80%) for core modules.
+- Successfully execute parallel training of at least N models simultaneously on available hardware.
+- Achieve a target R² score > 0.7 on standard test datasets for methylation prediction.
+
+## 3. Target Audience and User Personas
+
+**Target Audience:**
+- Computational Biologists
+- Bioinformaticians
+- Epigenomics Researchers
+- Data Scientists working with genomic data
+
+**User Personas:**
+
+*   **Persona 1: Dr. Evelyn Reed (Senior Computational Biologist)**
+    *   **Background:** Leads a research group studying epigenetic changes in cancer. Experienced in bioinformatics tools but prefers robust, well-documented pipelines.
+    *   **Goals:** Use EpiBench to analyze methylation patterns in large cohorts of AML patient samples compared to healthy controls. Identify differentially methylated regions (DMRs) associated with disease state. Understand the sequence and histone features driving methylation differences using model interpretation. Publish findings based on reliable and reproducible results.
+    *   **Pain Points:** Time-consuming data preprocessing steps, difficulty in integrating multiple data types, interpreting complex ML models ("black box" problem), ensuring reproducibility of analyses across team members.
+
+*   **Persona 2: Ben Carter (Bioinformatics PhD Student)**
+    *   **Background:** Developing new computational methods for epigenomic analysis. Comfortable with scripting and CLI tools. Needs to run many experiments and optimize models.
+    *   **Goals:** Use EpiBench to train methylation prediction models on novel datasets. Perform extensive hyperparameter optimization to achieve the best possible performance. Compare EpiBench's performance against other methods. Extend or modify parts of the pipeline for specific research questions.
+    *   **Pain Points:** Setting up complex ML environments and pipelines, limited access to high-performance computing resources (needs efficient memory usage), managing and tracking numerous experiments and configurations.
+
+**Accessibility Requirements:**
+- Ensure all CLI outputs are clear, well-formatted, and easily parsable or readable.
+- Provide comprehensive documentation covering installation, configuration, usage of each CLI command, and interpretation of results.
+- Offer example datasets and configuration files to facilitate onboarding.
+- Implement informative error messages to aid troubleshooting.
+
+## 4. Features and Requirements
+
+**F1: Data Processing Pipeline**
+- R1.1 (US-001): Support input from standard genomic formats (bed files with specific columns and bigwigs for histone marks).
+- R1.2 (US-001): Implement preprocessing to transform raw data into the required (10000, 11) 2D matrix format (DNA + Histone marks + Boundary markers).
+- R1.3 (US-008): Implement strict chromosome-based data splitting (default 70/15/15, configurable ratio) to prevent data leakage.
+- R1.4 (US-008): Utilize `LeakageFreeSequenceDataset` to enforce separation during data loading.
+- R1.5: Provide options for handling missing data or regions with low coverage (e.g., imputation, filtering).
+
+**F2: Model Training**
+- R2.1 (US-002): Implement the `SeqCNNRegressor` model architecture as specified (multi-branch, configurable layers/filters).
+- R2.2 (US-003): Integrate Optuna for hyperparameter optimization across the defined search space (LR, WD, filters, FC units, dropout, BN).
+- R2.3 (US-009): Implement early stopping based on a configurable validation metric (e.g., validation loss, R²) and patience.
+- R2.4 (US-002): Implement model checkpointing (saving best model and periodic checkpoints).
+- R2.5: Implement mechanisms to track and log GPU memory usage during training. Provide strategies or options for memory optimization if needed.
+- R2.6 (US-010): Support running multiple training experiments in parallel (e.g., via orchestration scripts leveraging available GPUs).
+
+**F3: Model Evaluation & Interpretation**
+- R3.1 (US-004): Calculate and report standard regression metrics (MSE, MAE, R², Pearson/Spearman correlation).
+- R3.2 (US-004): Generate visualizations of model performance (e.g., predicted vs. actual scatter plots, residual plots).
+- R3.3 (US-005): Implement Integrated Gradients to calculate feature attribution scores for sequence and histone mark inputs.
+- R3.4 (US-005): Provide utilities or visualizations for interpreting attribution scores (e.g., average importance per histone mark, sequence logos from high-attribution regions).
+- R3.5: Ensure the output formats of the interpretation step (e.g., high-attribution sequences, attribution scores) are compatible with standard external motif discovery tools (e.g., formats acceptable by MEME Suite).
+
+**F4: Comparative Analysis Framework**
+- R4.1 (US-006): Provide a mechanism (e.g., configuration, script) to define and run the pipeline on two distinct groups of samples (e.g., AML vs. CD34).
+- R4.2 (US-006): Implement cross-sample testing and evaluation within the defined groups.
+- R4.3 (US-006): Generate comparative reports and visualizations highlighting differences in model performance, feature importance, or predicted methylation patterns between the groups.
+
+**F5: Command-Line Interface & Orchestration**
+- R5.1: Provide distinct CLI commands for major pipeline stages: `epibench process-data`, `epibench train`, `epibench evaluate`, `epibench predict`, `epibench interpret`, `epibench compare`.
+- R5.2 (US-010, US-006): Develop orchestration scripts (e.g., shell scripts, Python scripts) to run common end-to-end workflows (e.g., full training pipeline, comparative analysis).
+- R5.3 (US-007): Implement a configuration system (e.g., YAML or JSON files) to manage all experiment parameters, paths, and settings. CLI commands should accept a configuration file.
+- R5.4 (US-011): Implement robust logging throughout the pipeline, capturing progress, warnings, errors, and key results. Allow configuration of log levels.
+- R5.5 (US-012): Provide clear `--help` messages for all CLI commands and subcommands.
+
+**Constraints & Dependencies:**
+- Requires Python 3.x environment.
+- Dependencies on external libraries (PyTorch, Optuna, numpy, pandas, scikit-learn, matplotlib/seaborn, specific bioinformatics libraries like pyBigWig if used - list to be finalized).
+- **Required Python Libraries:**
+  - torch>=1.12.0
+  - numpy>=1.21.0
+  - pandas>=1.3.0
+  - matplotlib>=3.4.0
+  - seaborn>=0.11.0
+  - scikit-learn>=1.0.0
+  - tqdm>=4.62.0
+  - biopython>=1.79
+  - pyBigWig>=0.3.18
+  - pyfaidx>=0.6.4
+  - plotly>=5.3.0
+  - jupyter>=1.0.0
+  - h5py>=3.1.0
+  - statsmodels>=0.13.0
+  - scipy>=1.7.0
+  - pyyaml>=6.0
+  - argparse>=1.4.0
+  - joblib>=1.1.0
+  - # For explainability features
+  - captum>=0.5.0
+  - shap>=0.40.0
+- Requires CUDA-compatible GPUs for efficient training and inference.
+- Requires sufficient disk storage for raw data, processed data, and model checkpoints.
+- Input data must adhere to the specified formats (bed, bigwig).
+
+**Assumptions:**
+- Users possess basic knowledge of genomics, epigenetics, and machine learning concepts.
+- Users are comfortable working in a command-line environment.
+- The underlying hardware (CPU, RAM, GPU, storage) meets the minimum requirements for processing the user's dataset size.
+
+## 5. Functional Workflows and Use Cases
+
+**UC1: Standard Model Training Workflow**
+1.  User prepares input data (bed files, bigwig files) and a configuration file specifying paths, parameters, and splitting strategy.
+2.  User runs `epibench process-data --config config.yaml`.
+3.  System processes raw data into matrices and splits into train/validation/test sets based on chromosomes.
+4.  User runs `epibench train --config config.yaml`.
+5.  System loads data, builds model, optionally runs Optuna HPO, trains the final model with early stopping, saves checkpoints and logs.
+6.  User examines logs and saved model files.
+
+**UC2: Prediction Workflow**
+1.  User has a trained model checkpoint and new processed input data matrices.
+2.  User updates configuration file with model path and prediction data path.
+3.  User runs `epibench predict --config config.yaml`.
+4.  System loads model and data, performs inference, saves predicted methylation scores to an output file.
+
+**UC3: Evaluation Workflow**
+1.  User has a trained model checkpoint and processed test data matrices.
+2.  User updates configuration file with model path and test data path.
+3.  User runs `epibench evaluate --config config.yaml`.
+4.  System loads model and data, calculates performance metrics (MSE, R², etc.), generates and saves performance plots, outputs results to console/log and optionally a results file.
+
+**UC4: Interpretation Workflow**
+1.  User has a trained model checkpoint and processed data matrices for interpretation.
+2.  User updates configuration file with model path and data path.
+3.  User runs `epibench interpret --config config.yaml`.
+4.  System loads model and data, runs Integrated Gradients, saves attribution scores and/or visualizations to output files.
+
+**UC5: Comparative Analysis Workflow**
+1.  User prepares input data for two groups (e.g., Group A - AML, Group B - CD34) and a configuration file specifying paths, parameters, and group definitions.
+2.  User runs an orchestration script or command like `epibench compare --config config.yaml`.
+3.  System runs the processing, training, and evaluation workflow (UC1, UC3) independently for both groups.
+4.  System performs comparative analysis (e.g., comparing metrics, feature importances) and generates a summary report and comparative visualizations.
+
+**Persona-Specific Paths:**
+- Dr. Reed (Comp Bio) would likely follow UC1 -> UC3 -> UC5 -> UC4, focusing on comparison and interpretation.
+- Ben Carter (PhD Student) would iterate heavily on UC1 (especially HPO part) -> UC3, potentially modifying code and comparing against baselines, before maybe using UC4.
+
+## 6. User Stories and Acceptance Criteria
+
+**US-001: Data Preprocessing**
+- **As a:** Researcher
+- **I want to:** Preprocess my raw genomic data files (bed, bigwig) into the required matrix format using a CLI command.
+- **So that:** I can prepare my data for input into the EpiBench model training pipeline.
+- **Acceptance Criteria:**
+    - A CLI command (`epibench process-data`) exists.
+    - The command accepts paths to input files (bed, bigwig) and output directory via configuration.
+    - The command successfully parses the specified input formats.
+    - The command generates output files containing matrices of the correct dimensions (N_samples, 10000, 11).
+    - The command handles file not found errors gracefully.
+    - The command logs progress and any errors encountered during processing.
+    - The command correctly implements functions like `process_sample()`, `run_methfast()`, `calculate_confidence_intervals()`, `wilson_score_interval()` as needed for matrix generation.
+
+**US-002: Model Training**
+- **As a:** Computational Biologist
+- **I want to:** Train the `SeqCNNRegressor` model on my processed data using a CLI command, specifying training parameters via a configuration file.
+- **So that:** I can generate a model capable of predicting methylation scores.
+- **Acceptance Criteria:**
+    - A CLI command (`epibench train`) exists.
+    - The command accepts paths to processed train/validation data and a configuration file.
+    - The training loop runs successfully on a CUDA-enabled GPU.
+    - Validation is performed at specified intervals.
+    - Model checkpoints (best model based on validation, periodic) are saved to the specified output directory.
+    - Training progress (epoch, loss, metrics) is logged to the console and/or a log file.
+    - Training completes successfully or stops early based on the early stopping criteria.
+
+**US-003: Hyperparameter Optimization**
+- **As a:** Bioinformatician
+- **I want to:** Perform hyperparameter optimization using Optuna for the `SeqCNNRegressor` model via a CLI option/mode.
+- **So that:** I can find the best set of hyperparameters (LR, WD, filters, FC units, dropout, BN) for my specific dataset to maximize model performance.
+- **Acceptance Criteria:**
+    - The `epibench train` command has an option or mode to enable Optuna HPO.
+    - The HPO process searches the predefined hyperparameter space specified in the configuration.
+    - The process logs the parameters and results for each trial.
+    - The process outputs the best hyperparameters found based on the optimization objective (e.g., minimize validation loss).
+    - Optionally, the process automatically retrains a final model using the best found hyperparameters.
+
+**US-004: Model Evaluation**
+- **As a:** Researcher
+- **I want to:** Evaluate my trained model on a held-out test set using a CLI command.
+- **So that:** I can objectively assess the model's predictive performance.
+- **Acceptance Criteria:**
+    - A CLI command (`epibench evaluate`) exists.
+    - The command accepts paths to a trained model checkpoint and processed test data via configuration.
+    - The command calculates and displays/logs specified performance metrics (MSE, MAE, R², Pearson correlation).
+    - The command generates and saves performance visualizations (e.g., predicted vs. actual scatter plot) to the specified output directory.
+    - Evaluation completes successfully and reports results clearly.
+
+**US-005: Model Interpretation**
+- **As a:** Computational Biologist
+- **I want to:** Apply the Integrated Gradients method to my trained model using a CLI command.
+- **So that:** I can understand which input features (specific DNA sequence positions, histone marks) are most influential for the model's predictions.
+- **Acceptance Criteria:**
+    - A CLI command (`epibench interpret`) exists.
+    - The command accepts paths to a trained model checkpoint and input data for interpretation via configuration.
+    - The command successfully computes attribution scores using Integrated Gradients.
+    - The command saves attribution scores and/or relevant visualizations (e.g., feature importance plots, sequence logos based on attribution) to the specified output directory.
+    - The interpretation process completes successfully.
+
+**US-006: Comparative Analysis**
+- **As a:** Researcher
+- **I want to:** Run a comparative analysis pipeline for two different sample groups (e.g., AML vs. CD34) using a single command or script.
+- **So that:** I can systematically compare methylation patterns, model performance, and feature importances between the groups.
+- **Acceptance Criteria:**
+    - A CLI command or orchestration script (`epibench compare` or `run_comparison.sh`) exists.
+    - The command accepts configuration defining the two groups, their data paths, and analysis parameters.
+    - The pipeline successfully runs data processing, training, and evaluation independently for both groups.
+    - A comparative report is generated summarizing key differences in metrics and potentially interpretation results.
+    - Comparative visualizations are generated and saved.
+    - The entire comparison process completes successfully.
+
+**US-007: Configuration Management**
+- **As a:** Bioinformatician
+- **I want to:** Specify all experiment parameters, file paths, and settings using a configuration file (e.g., YAML).
+- **So that:** My experiments are reproducible, easily manageable, and shareable.
+- **Acceptance Criteria:**
+    - All relevant parameters (data paths, model hyperparameters, training settings, evaluation metrics, etc.) can be set via a configuration file.
+    - All core CLI commands (`process-data`, `train`, `evaluate`, `predict`, `interpret`, `compare`) accept a `--config` argument pointing to the configuration file.
+    - Default values are used for parameters not specified in the config file, where appropriate.
+    - The system provides clear errors if the configuration file is missing, malformed, or lacks required parameters.
+
+**US-008: Leakage-Free Data Splitting**
+- **As a:** Researcher
+- **I want to:** Be confident that the data splitting process strictly separates training, validation, and test sets by chromosome.
+- **So that:** I can prevent positional data leakage and obtain reliable, unbiased model evaluation results.
+- **Acceptance Criteria:**
+    - The data processing/splitting utility partitions data such that all data points from a single chromosome belong to only one set (train, validation, or test).
+    - The `LeakageFreeSequenceDataset` class (or equivalent mechanism) is used during training and evaluation to load data according to the pre-defined splits.
+    - Unit tests verify that no chromosome overlap exists between the generated splits.
+    - The splitting ratios (e.g., 70/15/15) are applied based on chromosome counts or data volume per chromosome, as defined.
+
+**US-009: Early Stopping**
+- **As a:** Computational Biologist
+- **I want to:** Utilize early stopping during model training based on validation performance.
+- **So that:** I can prevent model overfitting and potentially reduce unnecessary computation time and cost.
+- **Acceptance Criteria:**
+    - The training process monitors a specified validation metric (e.g., validation loss, R²) at regular intervals.
+    - Training stops automatically if the validation metric does not improve for a configured number of epochs (patience).
+    - The checkpoint saved as the 'best model' corresponds to the epoch with the best validation metric value.
+    - Early stopping parameters (metric, patience, mode - min/max) are configurable.
+
+**US-010: Parallel Training Execution**
+- **As a:** Bioinformatician
+- **I want to:** Run multiple EpiBench training jobs concurrently (e.g., for different hyperparameter sets or target regions).
+- **So that:** I can accelerate my research and make efficient use of available compute resources (multiple GPUs).
+- **Acceptance Criteria:**
+    - Orchestration scripts or documentation guides are provided for launching multiple `epibench train` instances in parallel.
+    - The tool allows specifying which GPU device to use (e.g., via `CUDA_VISIBLE_DEVICES` or a config parameter).
+    - Parallel runs do not interfere with each other (e.g., writing to unique output directories based on configuration).
+    - Resource utilization (GPU memory) is manageable when running multiple jobs.
+
+**US-011: Logging**
+- **As a:** User running potentially long computational processes
+- **I want to:** See clear and informative logging output during pipeline execution.
+- **So that:** I can monitor the progress of my jobs, understand what the tool is doing, and effectively diagnose any issues or errors that arise.
+- **Acceptance Criteria:**
+    - A consistent logging format is used across all pipeline stages.
+    - Logs include timestamps and severity levels (INFO, WARN, ERROR, DEBUG).
+    - Progress is logged for key steps (e.g., starting data processing, loading data, starting epoch X, validation results, saving checkpoint, evaluation complete).
+    - Configuration settings used for the run are logged at the beginning.
+    - Errors are logged with sufficient detail (e.g., stack trace, context) to aid debugging.
+    - Log level is configurable (e.g., via CLI argument or config file).
+
+**US-012: Usability and Documentation**
+- **As a:** Researcher new to the tool
+- **I want to:** Easily install EpiBench and understand how to use its various commands and options.
+- **So that:** I can quickly start using the tool for my analysis without significant setup hurdles.
+- **Acceptance Criteria:**
+    - Clear, step-by-step installation instructions are provided (e.g., managing Python environment, installing dependencies via `requirements.txt`).
+    - Each CLI command (`epibench process-data`, `train`, etc.) provides a helpful usage message via a `--help` flag.
+    - Comprehensive documentation (e.g., README, wiki) exists, explaining the overall workflow, configuration file format, command-line options, and interpretation of outputs.
+    - Example configuration files and potentially small example datasets are provided.
+
+**US-013: Filesystem Access Control**
+- **As a:** User running EpiBench
+- **I want to:** Be assured that the tool primarily interacts with files and directories explicitly specified in the configuration or command-line arguments.
+- **So that:** I can maintain data integrity and prevent accidental modification or access to unintended parts of the filesystem.
+- **Acceptance Criteria:**
+    - File read operations are limited to input data paths, configuration files, and model checkpoint paths provided by the user.
+    - File write operations are limited to specified output directories for processed data, logs, checkpoints, results, and visualizations.
+    - Input validation checks the existence and basic validity of provided paths.
+    - The tool does not perform arbitrary filesystem scans or operations outside the specified working directories.
+    - (Optional) Temporary files are created in designated temporary locations and cleaned up appropriately.

@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Orchestration script to run a standard EpiBench workflow:
+process-data -> train -> evaluate -> predict
+"""
+
+import argparse
+import logging
+import subprocess
+import sys
+import os
+from pathlib import Path
+import concurrent.futures
+import yaml  # Add yaml import for reading sample config
+import torch # Add torch import for GPU check
+
+# Basic logger setup
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def run_command(command: list[str]):
+    """Runs a command using subprocess and logs the output."""
+    logger.info(f"Running command: {' '.join(command)}")
+    try:
+        process = subprocess.run(
+            command,
+            check=True,  # Raise exception on non-zero exit code
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+        logger.info(f"Command stdout:\n{process.stdout}")
+        if process.stderr:
+            logger.warning(f"Command stderr:\n{process.stderr}")
+        logger.info("Command completed successfully.")
+    except FileNotFoundError:
+        logger.error(f"Error: The command '{command[0]}' was not found. Is epibench installed and in PATH?")
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Command failed with exit code {e.returncode}")
+        logger.error(f"Stdout:\n{e.stdout}")
+        logger.error(f"Stderr:\n{e.stderr}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+        sys.exit(1)
+
+def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path):
+    """Runs the full process->train->eval->predict pipeline for a single sample configuration."""
+    
+    sample_name = sample_config.get('name')
+    process_data_config = sample_config.get('process_data_config')
+    train_config = sample_config.get('train_config')
+    input_data_for_prediction = sample_config.get('input_data_for_prediction') # Optional
+
+    # Optional overrides for subdirs and filenames from sample config
+    processed_data_name = sample_config.get('processed_data_name', "processed_data")
+    training_output_name = sample_config.get('training_output_name', "training_output")
+    evaluation_output_name = sample_config.get('evaluation_output_name', "evaluation_output")
+    prediction_output_name = sample_config.get('prediction_output_name', "prediction_output")
+    test_data_filename = sample_config.get('test_data_filename', "test.h5")
+    checkpoint_filename = sample_config.get('checkpoint_filename', "best_model.pth")
+
+    if not all([sample_name, process_data_config, train_config]):
+        logger.error(f"Skipping sample due to missing required fields (name, process_data_config, train_config): {sample_config}")
+        return False # Indicate failure
+
+    logger.info(f"===== Starting Pipeline for Sample: {sample_name} =====")
+
+    # --- Setup Paths ---
+    sample_output_dir = base_output_dir / sample_name
+    
+    process_out_dir = sample_output_dir / processed_data_name
+    train_out_dir = sample_output_dir / training_output_name
+    eval_out_dir = sample_output_dir / evaluation_output_name
+    predict_out_dir = sample_output_dir / prediction_output_name
+
+    # Expected intermediate file paths
+    test_data_path = process_out_dir / test_data_filename
+    checkpoint_path = train_out_dir / checkpoint_filename
+    predict_input_path = Path(input_data_for_prediction) if input_data_for_prediction else test_data_path
+
+    # Create directories
+    # No error if run in parallel, exist_ok=True handles it
+    for path in [process_out_dir, train_out_dir, eval_out_dir, predict_out_dir]:
+        path.mkdir(parents=True, exist_ok=True)
+        # Avoid excessive logging in parallel runs, log main creation in main()
+        # logger.info(f"Ensured output directory exists: {path}")
+
+    try:
+        # --- Step 1: Process Data ---
+        logger.info(f"[{sample_name}] --- Starting Step 1: Process Data ---")
+        process_cmd = [
+            "epibench", "process-data",
+            "--config", process_data_config,
+            "-o", str(process_out_dir)
+        ]
+        run_command(process_cmd)
+
+        # --- Step 2: Train Model ---
+        logger.info(f"[{sample_name}] --- Starting Step 2: Train Model ---")
+        train_cmd = [
+            "epibench", "train",
+            "--config", train_config,
+            "--output-dir", str(train_out_dir)
+        ]
+        run_command(train_cmd)
+
+        if not checkpoint_path.is_file():
+            raise RuntimeError(f"Training step finished, but checkpoint not found: {checkpoint_path}")
+        logger.info(f"[{sample_name}] Found checkpoint file: {checkpoint_path}")
+
+        # --- Step 3: Evaluate Model ---
+        logger.info(f"[{sample_name}] --- Starting Step 3: Evaluate Model ---")
+        if not test_data_path.is_file():
+            raise RuntimeError(f"Process data step finished, but test data not found: {test_data_path}")
+        logger.info(f"[{sample_name}] Found test data file for evaluation: {test_data_path}")
+
+        evaluate_cmd = [
+            "epibench", "evaluate",
+            "--config", train_config, # Reuse train config
+            "--checkpoint", str(checkpoint_path),
+            "--test-data", str(test_data_path),
+            "-o", str(eval_out_dir)
+        ]
+        run_command(evaluate_cmd)
+
+        # --- Step 4: Generate Predictions ---
+        logger.info(f"[{sample_name}] --- Starting Step 4: Generate Predictions ---")
+        if not predict_input_path.is_file():
+             raise RuntimeError(f"Input data for prediction not found: {predict_input_path}")
+        logger.info(f"[{sample_name}] Using input data for prediction: {predict_input_path}")
+
+        predict_cmd = [
+            "epibench", "predict",
+            "--config", train_config, # Reuse train config
+            "--checkpoint", str(checkpoint_path),
+            "--input-data", str(predict_input_path),
+            "-o", str(predict_out_dir)
+        ]
+        run_command(predict_cmd)
+
+        logger.info(f"===== Pipeline Completed Successfully for Sample: {sample_name} =====")
+        return True # Indicate success
+    
+    except Exception as e:
+        # Catch exceptions from run_command or RuntimeErrors
+        logger.error(f"===== Pipeline FAILED for Sample: {sample_name} =====")
+        logger.error(f"Error during pipeline execution: {e}", exc_info=True) # Log traceback
+        return False # Indicate failure
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Run standard EpiBench pipelines for one or more samples, potentially in parallel.",
+        formatter_class=argparse.RawTextHelpFormatter # Keep formatting for help text
+        )
+
+    # Input Modes: Either single sample via args or multiple via YAML config
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument(
+        "--samples-config", 
+        help="Path to a YAML file listing multiple sample configurations to run.\n"
+             "Format:\n"
+             "- name: sample_a\n"
+             "  process_data_config: path/to/process_a.yaml\n"
+             "  train_config: path/to/train_a.yaml\n"
+             "  # Optional fields like input_data_for_prediction, *_name, *_filename\n"
+             "- name: sample_b\n"
+             "  ...\n"
+    )
+    input_group.add_argument(
+        "--single-sample-name", 
+        help="Run for a single sample specified by command-line arguments."
+    )
+
+    # Arguments required only if running for a single sample
+    single_sample_group = parser.add_argument_group('Single Sample Arguments (if --single-sample-name is used)')
+    single_sample_group.add_argument("--process-data-config", help="Path to configuration YAML/JSON for the 'process-data' step.")
+    single_sample_group.add_argument("--train-config", help="Path to configuration YAML/JSON for the 'train' step.")
+    single_sample_group.add_argument("--input-data-for-prediction", help="Optional: Path to specific input data for the final prediction step.")
+    # Optional overrides for single sample
+    single_sample_group.add_argument("--processed-data-name", default="processed_data", help="Subdirectory name for processed data.")
+    single_sample_group.add_argument("--training-output-name", default="training_output", help="Subdirectory name for training outputs.")
+    single_sample_group.add_argument("--evaluation-output-name", default="evaluation_output", help="Subdirectory name for evaluation results.")
+    single_sample_group.add_argument("--prediction-output-name", default="prediction_output", help="Subdirectory name for prediction results.")
+    single_sample_group.add_argument("--test-data-filename", default="test.h5", help="Expected filename of the test dataset.")
+    single_sample_group.add_argument("--checkpoint-filename", default="best_model.pth", help="Expected filename of the best model checkpoint.")
+
+    # General arguments
+    parser.add_argument("--output-dir", required=True, help="Base directory for all pipeline outputs.")
+    parser.add_argument("--max-workers", type=int, default=1, help="Maximum number of parallel processes to use when running multiple samples.")
+
+    args = parser.parse_args()
+
+    # --- Determine Samples to Run ---
+    samples_to_run = []
+    if args.samples_config:
+        logger.info(f"Loading sample configurations from: {args.samples_config}")
+        try:
+            with open(args.samples_config, 'r') as f:
+                samples_to_run = yaml.safe_load(f)
+            if not isinstance(samples_to_run, list):
+                raise ValueError("Samples config file should contain a list of sample dictionaries.")
+            logger.info(f"Found {len(samples_to_run)} samples in config file.")
+        except FileNotFoundError:
+            logger.error(f"Samples configuration file not found: {args.samples_config}")
+            sys.exit(1)
+        except yaml.YAMLError as e:
+            logger.error(f"Error parsing samples YAML configuration file: {e}")
+            sys.exit(1)
+        except ValueError as e:
+            logger.error(f"Invalid format in samples configuration file: {e}")
+            sys.exit(1)
+
+    elif args.single_sample_name:
+        logger.info(f"Running for single sample: {args.single_sample_name}")
+        # Validate that required single-sample args are provided
+        if not args.process_data_config or not args.train_config:
+             parser.error("--process-data-config and --train-config are required when using --single-sample-name.")
+        
+        single_sample_config = {
+            'name': args.single_sample_name,
+            'process_data_config': args.process_data_config,
+            'train_config': args.train_config,
+            'input_data_for_prediction': args.input_data_for_prediction,
+            'processed_data_name': args.processed_data_name,
+            'training_output_name': args.training_output_name,
+            'evaluation_output_name': args.evaluation_output_name,
+            'prediction_output_name': args.prediction_output_name,
+            'test_data_filename': args.test_data_filename,
+            'checkpoint_filename': args.checkpoint_filename,
+        }
+        samples_to_run.append(single_sample_config)
+
+    if not samples_to_run:
+        logger.error("No samples specified to run. Use --samples-config or --single-sample-name.")
+        sys.exit(1)
+
+    # --- Setup Base Output Dir ---
+    base_output_dir = Path(args.output_dir)
+    base_output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Using base output directory: {base_output_dir}")
+
+    # --- Check GPU availability vs max_workers ---
+    gpu_available = torch.cuda.is_available()
+    num_gpus = torch.cuda.device_count() if gpu_available else 0
+    
+    if gpu_available:
+        logger.info(f"Detected {num_gpus} CUDA-enabled GPU(s).")
+        if args.max_workers > num_gpus:
+             logger.warning(f"Warning: max_workers ({args.max_workers}) is greater than the number of detected GPUs ({num_gpus}).")
+             logger.warning("If pipeline steps are GPU-intensive, this may lead to resource contention or out-of-memory errors.")
+             logger.warning("Consider setting --max-workers <= {num_gpus}.")
+    else:
+        logger.info("No CUDA-enabled GPU detected. Running on CPU.")
+        
+    # --- Execute Pipelines ---
+    max_workers = args.max_workers
+    if max_workers <= 0:
+        max_workers = 1 
+    
+    logger.info(f"Starting pipeline execution for {len(samples_to_run)} samples using up to {max_workers} parallel processes.")
+
+    successful_samples = 0
+    failed_samples = 0
+
+    # Use ProcessPoolExecutor for parallel execution
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all jobs
+        # Pass base_output_dir as a fixed argument using lambda or functools.partial if needed, 
+        # but here it's simpler to pass it directly if the function accepts it.
+        future_to_sample = {executor.submit(run_pipeline_for_sample, sample, base_output_dir): sample for sample in samples_to_run}
+        
+        for future in concurrent.futures.as_completed(future_to_sample):
+            sample_info = future_to_sample[future]
+            sample_name = sample_info.get('name', 'unknown_sample')
+            try:
+                result = future.result()  # Get result (True for success, False for failure)
+                if result:
+                    successful_samples += 1
+                    logger.info(f"Pipeline finished successfully for sample: {sample_name}")
+                else:
+                    failed_samples += 1
+                    # Error details should have been logged within run_pipeline_for_sample
+                    logger.warning(f"Pipeline finished with errors for sample: {sample_name}") 
+            except Exception as exc:
+                failed_samples += 1
+                # Log exception if the future itself raised one (unexpected error in executor or task function)
+                logger.error(f"Sample {sample_name} generated an exception during execution: {exc}", exc_info=True)
+
+    logger.info("--- Pipeline Execution Summary ---")
+    logger.info(f"Total Samples: {len(samples_to_run)}")
+    logger.info(f"Successful: {successful_samples}")
+    logger.info(f"Failed: {failed_samples}")
+    logger.info("---------------------------------")
+
+    if failed_samples > 0:
+        logger.error("Some pipelines failed. Please review the logs above for details.")
+        sys.exit(1)
+    else:
+        logger.info("All pipelines completed successfully.")
+
+if __name__ == "__main__":
+    main() 
