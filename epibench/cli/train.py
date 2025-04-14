@@ -2,6 +2,7 @@ import argparse
 import logging
 import sys
 import os
+import torch.optim as optim
 
 # Add project root to sys.path to allow imports from epibench
 # This assumes the script is run from the project root or similar context
@@ -11,7 +12,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Import necessary components (will be used in later subtasks)
-from epibench.config import ConfigManager
+from epibench.config.config_manager import ConfigManager
 from epibench.data.data_loader import create_dataloaders
 from epibench.models import models
 from epibench.training.trainer import Trainer
@@ -21,9 +22,9 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-def setup_arg_parser() -> argparse.ArgumentParser:
-    """Sets up the argument parser for the train command."""
-    parser = argparse.ArgumentParser(description="Train an EpiBench model.")
+def setup_arg_parser(parser: argparse.ArgumentParser):
+    """Adds arguments for the train command to the provided subparser."""
+    parser.description = "Train an EpiBench model." # Set description on the passed-in parser
 
     parser.add_argument(
         "-c", "--config",
@@ -46,12 +47,10 @@ def setup_arg_parser() -> argparse.ArgumentParser:
     )
     # Add other potential arguments like --checkpoint, --device, --num-workers etc. later if needed
 
-    return parser
-
-def main():
+def main(args):
     """Main function to parse arguments and orchestrate training."""
-    parser = setup_arg_parser()
-    args = parser.parse_args()
+    # The parser is now handled by the main CLI entry point
+    # args = parser.parse_args() # Args are passed directly to this function now
 
     # --- Load Configuration First (to get logging settings) ---
     config_manager = None # Initialize to None

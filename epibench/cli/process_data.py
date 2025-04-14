@@ -15,8 +15,8 @@ import random # For shuffling chromosomes
 import logging # Import logging module
 
 # Import helper functions and config loading
-from epibench.config.config_manager import load_config
-from epibench.utils.logging import setup_logger # Import logger setup
+from epibench.config.config_manager import ConfigManager # Import the class
+from epibench.utils.logging import LoggerManager # Import the LoggerManager class
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -218,17 +218,23 @@ def split_hdf5_by_chromosome(input_h5_path: str, output_dir: str, train_ratio: f
 
 def process_data_main(args):
     """Main function for the process-data command."""
+    config_manager = None # Initialize to None
     config = {}
     try:
         # Try to load config first to get logging settings
-        config = load_config(args.config)
+        config_manager = ConfigManager(args.config) # Instantiate the manager
+        config = config_manager.config # Get the loaded config dictionary
+
         log_settings = config.get('logging', {})
         log_level_str = log_settings.get('level', 'INFO').upper()
         log_level = getattr(logging, log_level_str, logging.INFO)
         log_file = log_settings.get('file') # Can be None
         
         # Setup logger based on config
-        setup_logger(log_level=log_level, log_file=log_file)
+        # Use the LoggerManager class to setup
+        LoggerManager.setup_logger(config_manager=config_manager, 
+                                   default_log_level=log_level, 
+                                   default_log_file=log_file)
         
         logger.info("Starting data processing...")
         logger.info(f"Configuration file path: {args.config}")
@@ -241,7 +247,7 @@ def process_data_main(args):
         # If config load fails before logger setup, print to stderr
         print(f"Error: Configuration file not found: {e}", file=sys.stderr)
         sys.exit(1)
-    except (ValueError, yaml.YAMLError, json.JSONDecodeError, RuntimeError) as e:
+    except (ValueError, yaml.YAMLError, json.JSONDecodeError) as e:
         print(f"Error loading or parsing configuration file {args.config} before logging setup: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:

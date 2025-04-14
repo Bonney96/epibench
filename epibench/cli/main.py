@@ -15,7 +15,7 @@ if project_root not in sys.path:
     
 # Import subcommand setup functions and main functions
 from .process_data import setup_process_data_parser, process_data_main
-from .train import setup_train_parser, train_main
+from .train import setup_arg_parser as setup_train_parser, main as train_main
 from .evaluate import setup_evaluate_parser, evaluate_main
 from .predict import setup_predict_parser, predict_main
 from .interpret import setup_interpret_parser, interpret_main

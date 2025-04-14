@@ -16,7 +16,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from epibench.config import ConfigManager
+from epibench.config.config_manager import ConfigManager
 from epibench.utils.logging import LoggerManager
 from epibench.models import models # Assuming get_model exists
 from epibench.data.data_loader import create_dataloaders # Need a way to load prediction data

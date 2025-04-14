@@ -6,6 +6,7 @@ import logging
 import sys
 import os
 import json
+import yaml
 
 # Add project root to sys.path (if running as script)
 # project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -13,10 +14,10 @@ import json
 #     sys.path.insert(0, project_root)
 
 # Assuming necessary imports - adjust based on actual locations
-from epibench.config import ConfigManager
+from epibench.config.config_manager import ConfigManager
+from epibench.utils.logging import LoggerManager
 from epibench.analysis.comparative import ComparativeAnalyzer # Needed later
-from epibench.util.logging_utils import setup_logging
-from epibench.util.io_utils import ensure_dir
+from epibench.utils.io_utils import ensure_dir
 
 # Setup basic logger for initial messages
 logger = logging.getLogger(__name__)
@@ -96,12 +97,17 @@ def compare_main(args):
 
     # --- Setup Logging (using loaded config) ---
     try:
-        log_level = compare_config.get('logging', {}).get('level', 'INFO')
-        # Allow output dir to be used for log file if specified
+        log_level_str = compare_config.get('logging', {}).get('level', 'INFO').upper()
+        log_level = getattr(logging, log_level_str, logging.INFO)
         log_file_config = compare_config.get('logging', {}).get('file')
         log_file = os.path.join(args.output_dir, log_file_config) if log_file_config else None
         
-        setup_logging(level=log_level, log_file=log_file)
+        # Call the correct static method
+        LoggerManager.setup_logger(config_manager=config_manager, 
+                                   default_log_level=log_level, 
+                                   default_log_file=log_file,
+                                   force_reconfigure=True) # Force reconfigure 
+                                   
         logger = logging.getLogger(__name__) # Re-get logger after setup
         logger.info("Logging configured.")
         logger.debug(f"Full comparative configuration: {json.dumps(compare_config, indent=2)}")
