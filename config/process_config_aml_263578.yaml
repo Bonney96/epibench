@@ -1,0 +1,42 @@
+# Configuration for processing AML sample 263578
+
+# Input File Paths
+reference_genome: /storage1/fs1/dspencer/Active/spencerlab/refdata/hg38/sequence/hg38_mgi_patch.fa
+methylation_bed: /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578_aml_dmrs.bed
+histone_bigwigs:
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K27ac_R1.bigwig
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K27me3_R1.bigwig
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K36me3_R1.bigwig
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K4me_R1.bigwig
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K4me3_R1.bigwig
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K9me3_R1.bigwig
+  # Note: Ensure process_data.py correctly uses the 6th column (0-indexed 5) from the BED file if needed
+
+# Output File Path
+# This path is relative to where you run the command or absolute
+# output_hdf5: ./processed_data/AML_263578/processed_data.h5 
+# The process-data command takes an --output-dir argument, which is where train/val/test splits are saved.
+# The combined HDF5 is currently saved within that output directory as 'processed_data.h5' by default.
+
+# Processing Parameters
+window_size: 10000 # Size of the genomic window
+step_size: 10000   # Step between windows (10000 = non-overlapping)
+
+# --- Parameters for Region-Based Processing (New Approach) ---
+target_sequence_length: 10000 # Fixed length for sequence/histone features around BED region center
+# methylation_bed_column: 5 # Optional: 0-based index of methylation value (default is 5, the 6th column)
+
+# Data Splitting Parameters (Now used for random region split)
+# For single-sample processing, setting train=1.0 keeps all regions for training/manual splitting later.
+split_ratios:
+  train: 1.0
+  validation: 0.0
+  # test ratio is implicit (1.0 - train - validation)
+
+# Optional: Random seed for reproducible chromosome shuffling during split
+# random_seed: 42
+
+# Logging Configuration
+logging:
+  level: INFO # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # file: processing_aml_263578.log # Optional: specify a log file path relative to output dir 
