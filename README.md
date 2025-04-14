@@ -123,8 +123,8 @@ See `scripts/README.md` for detailed usage of the orchestration scripts.
 
 ## Contributing
 
-*(Contribution guidelines to be added)*
+*Contributions Welcome!*
 
 ## License
 
-*(License information to be added) - Assuming MIT or similar based on setup.py*
+*MIT*
