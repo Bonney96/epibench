@@ -18,7 +18,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from epibench.config import ConfigManager
+from epibench.config import config_manager
 from epibench.utils.logging import LoggerManager
 from epibench.models import models
 from epibench.data.datasets import HDF5Dataset
