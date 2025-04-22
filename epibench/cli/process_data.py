@@ -266,11 +266,12 @@ def process_data_main(args):
         # --- TEMPORARY DEBUGGING: Open BigWigs BEFORE Fasta ---
         logger.info("DEBUG: Opening histone BigWig files first...")
         for bw_path in histone_bw_paths:
-            logger.info(f"  - DEBUG: Trying to open {bw_path}")
+            bw_path_str = str(bw_path) # Explicitly convert to string
+            logger.info(f"  - DEBUG: Trying to open {bw_path_str} (Type: {type(bw_path_str)})")
             try:
-                histone_handles.append(pyBigWig.open(bw_path))
+                histone_handles.append(pyBigWig.open(bw_path_str))
             except Exception as e:
-                logger.error(f"DEBUG: Failed to open BigWig {bw_path}: {e}", exc_info=True)
+                logger.error(f"DEBUG: Failed to open BigWig {bw_path_str}: {e}", exc_info=True)
                 # Decide whether to exit or just log? For debugging, let's exit.
                 sys.exit(1)
         logger.info("DEBUG: Successfully opened all histone BigWig files.")
