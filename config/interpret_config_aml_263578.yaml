@@ -1,0 +1,58 @@
+# Interpretation Configuration for AML 263578 (Region Based)
+
+# Path to the training configuration file used for the model checkpoint.
+# This is CRITICAL for reconstructing the correct model architecture.
+# It should point to the config saved *within* the training output directory.
+training_config: ./training_results/AML_263578_SeqCNNRegressor/train_config.yaml
+
+# Interpretation method parameters
+interpretation:
+  integrated_gradients:
+    n_steps: 50              # Number of steps for approximation
+    method: "gausslegendre"  # Integration method
+    internal_batch_size: 64  # Batch size during interpretation passes
+    # baseline: "zero"         # Baseline input type ('zero', 'random', 'gaussian', or path to custom baseline HDF5)
+    # random_seed: 42          # Seed for random/gaussian baselines
+
+# Feature extraction parameters (applied to attribution maps)
+feature_extraction:
+  method: "top_k"            # Method ('top_k', 'threshold')
+  top_k: 100                 # Number of top features to extract per sample
+  # threshold: 0.1           # Threshold for feature extraction (used if method is 'threshold')
+  # absolute_value: true     # Use absolute attribution values for ranking/thresholding
+
+# Output configuration
+output:
+  save_attributions: true    # Save raw attribution scores to HDF5
+  generate_plots: true       # Generate visualization plots
+  filename_prefix: AML_263578_interpret # Prefix for output files (HDF5, TSV, plots)
+
+# Visualization parameters (used if generate_plots is true)
+visualization:
+  # Names for the histone tracks to display in the ground truth panel.
+  # Order MUST match the order of paths in histone_bigwig_paths.
+  histone_names:
+    - H3K27ac
+    - H3K27me3
+    - H3K36me3
+    - H3K4me1   # Assumed from H3K4me filename pattern
+    - H3K4me3
+    - H3K9me3
+  # Paths to the BigWig files for ground truth visualization.
+  # These can be the same or different from the ones used as model input.
+  histone_bigwig_paths:
+    - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K27ac_R1.bigwig
+    - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K27me3_R1.bigwig
+    - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K36me3_R1.bigwig
+    - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K4me_R1.bigwig
+    - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K4me3_R1.bigwig
+    - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K9me3_R1.bigwig
+
+  max_samples_to_plot: 100 # Limit the number of samples plotted to avoid excessive runtime/output
+  plot_dpi: 150            # Resolution for saved plot images
+  # colormap: "viridis"      # Colormap for attribution heatmap
+
+# Logging Configuration
+logging:
+  level: INFO # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # file: interpretation_aml_263578.log # Optional: specify a log file path relative to output dir 

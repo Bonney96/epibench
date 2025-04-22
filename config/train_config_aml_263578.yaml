@@ -26,12 +26,12 @@ model:
   # Parameters specific to the SeqCNNRegressor model.
   params:
     # Number of input channels/tracks (verify this matches data processing output).
-    input_channels: 11 
+    input_channels: 10
     # Configuration for the multi-branch CNN.
     # List of filter counts for each convolutional layer in a branch.
     num_filters: 64 # Renamed from cnn_filters and assume a single value is expected per the __init__
     # List of kernel sizes, each defining a separate branch.
-    kernel_sizes: [9, 25, 51]
+    kernel_sizes: [3, 9, 25, 51]
     # Activation function ('ReLU', 'GELU', etc.).
     activation: ReLU
     
