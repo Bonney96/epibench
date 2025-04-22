@@ -9,6 +9,9 @@ import json
 import torch
 import numpy as np
 from tqdm import tqdm
+from pathlib import Path
+import yaml
+from typing import Optional # Add Optional typing hint
 
 # Add project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -18,9 +21,11 @@ if project_root not in sys.path:
 from epibench.config import ConfigManager
 from epibench.utils.logging import LoggerManager
 from epibench.models import models
-from epibench.data.data_loader import create_dataloaders # Or a specific loader for interpretation data
-from epibench.training.trainer import Trainer # For static load_model method
-from epibench.interpretation import ModelInterpreter
+from epibench.data.datasets import HDF5Dataset
+from torch.utils.data import DataLoader
+from epibench.validation.config_validator import validate_interpret_config, InterpretConfig
+from epibench.interpretation.attributors import calculate_integrated_gradients, generate_baseline
+from epibench.interpretation.io import save_interpretation_results, extract_and_save_features, generate_and_save_plots # Added IO imports
 
 logger = logging.getLogger(__name__)
 
@@ -30,118 +35,85 @@ def setup_interpret_parser(parser: argparse.ArgumentParser):
         "-c", "--config",
         type=str,
         required=True,
-        help="Path to the YAML/JSON configuration file used during training (or a similar one)."
+        help=(
+            "Path to the YAML interpretation configuration file. This file specifies "
+            "the attribution method, parameters, output options, visualization settings, "
+            "and path to the original training configuration."
+        )
     )
     parser.add_argument(
         "--checkpoint",
         type=str,
         required=True,
-        help="Path to the model checkpoint file (.pth) to interpret."
+        help="Path to the trained model checkpoint file (.pth) to interpret."
     )
     parser.add_argument(
         "-i", "--input-data",
         type=str,
         required=True,
-        help="Path to the input dataset file (e.g., HDF5) for which to generate interpretations."
+        help=(
+            "Path to the input dataset file (HDF5 format) containing the samples "
+            "for which to generate interpretations. Must include coordinate information."
+        )
     )
     parser.add_argument(
         "-o", "--output-dir",
         type=str,
         required=True,
-        help="Directory to save interpretation results (attributions, plots, regions)."
+        help="Directory to save all interpretation results (e.g., attributions.h5, plots, features.tsv)."
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         required=False,
-        help="Batch size for interpretation. Overrides config if provided."
+        default=None, # Default is now taken from config, CLI overrides
+        help="Batch size for processing data during interpretation. Overrides the batch_size in the config if provided."
     )
     parser.add_argument(
         "--device",
         type=str,
         default=None, # Auto-detect by default
-        help="Device to use ('cpu' or 'cuda'). Defaults to cuda if available."
-    )
-    parser.add_argument(
-        "--target",
-        type=int,
-        default=None,
-        help="Target output index for attribution (for multi-output models). Defaults to argmax."
-    )
-    parser.add_argument(
-        "--n-steps",
-        type=int,
-        default=50,
-        help="Number of steps for Integrated Gradients approximation."
-    )
-    parser.add_argument(
-        "--baseline",
-        type=str, # Could be path to a baseline file or 'zeros'
-        default='zeros',
-        help="Baseline to use for Integrated Gradients. Default is zeros. (Future: support file path)"
-    )
-    parser.add_argument(
-        "--top-k",
-        type=int,
-        default=None,
-        help="Extract top K features with highest (absolute) attribution."
-    )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=None,
-        help="Extract features with (absolute) attribution above this threshold."
-    )
-    parser.add_argument(
-        "--no-abs-val",
-        action="store_true",
-        default=False,
-        help="Use raw attribution scores (not absolute) for thresholding/top-k."
-    )
-    parser.add_argument(
-        "--save-attributions",
-        action="store_true",
-        default=False,
-        help="Save the raw attribution tensors to a file."
-    )
-    parser.add_argument(
-        "--no-plots",
-        action="store_true",
-        default=False,
-        help="Disable generation of attribution visualization plots."
+        help="Compute device to use ('cpu' or 'cuda[:<index>]'). Defaults to 'cuda' if available, otherwise 'cpu'."
     )
 
 def interpret_main(args):
     """Main function for the interpret command."""
-    # --- Load Config (Subtask 13.2) ---
-    config_manager = None
-    config = {}
+    # --- Load and Validate Interpretation Config (using new validator) ---
+    config: Optional[InterpretConfig] = None
     try:
-        config_manager = ConfigManager(args.config)
-        config = config_manager.config
-    except FileNotFoundError:
-        logging.basicConfig(level="INFO", format='%(asctime)s - %(levelname)s - %(message)s')
-        logger.error(f"Configuration file not found: {args.config}")
-        sys.exit(1)
+        config = validate_interpret_config(args.config)
     except Exception as e:
-        logging.basicConfig(level="INFO", format='%(asctime)s - %(levelname)s - %(message)s')
-        logger.error(f"Error loading configuration from {args.config}: {e}", exc_info=True)
+        logging.basicConfig(level="INFO", format='%(asctime)s - %(levelname)s - %(message)s') # Basic setup for early errors
+        logger.error(f"Error loading or validating configuration from {args.config}: {e}", exc_info=True)
         sys.exit(1)
 
     # --- Setup Logging (using config) ---
-    LoggerManager.setup_logger(config_manager=config_manager)
+    LoggerManager.setup_logger(
+        log_level_override=config.logging_config.level,
+        log_file_override=config.logging_config.file,
+        log_to_console=True # Assuming console logging is always desired
+    )
     logger.info("Starting EpiBench model interpretation...")
     logger.info(f"Interpretation arguments: {args}")
     logger.info(f"Loaded configuration from: {args.config}")
-    logger.debug(f"Full configuration: {config}")
+    logger.debug(f"Validated configuration: {config.model_dump_json(indent=2)}")
 
     # --- Setup Output Directory ---
     try:
-        os.makedirs(args.output_dir, exist_ok=True)
-        logger.info(f"Output directory set to: {args.output_dir}")
+        # Use Path object for consistency
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Output directory set to: {output_dir}")
     except OSError as e:
-        logger.error(f"Failed to create output directory {args.output_dir}: {e}", exc_info=True)
+        logger.error(f"Failed to create output directory {output_dir}: {e}", exc_info=True)
         sys.exit(1)
+    
+    # --- Generate Filename Prefix ---
+    # Create a consistent prefix based on input file and config for output files
+    input_filename = Path(args.input_data).stem
+    config_filename = Path(args.config).stem
+    filename_prefix = f"{input_filename}_{config_filename}"
+    logger.info(f"Using filename prefix for output files: {filename_prefix}")
 
     # --- Setup Device ---
     if args.device:
@@ -150,32 +122,60 @@ def interpret_main(args):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
-    # --- Load Model (Subtask 13.3) ---
+    # --- Load Model Architecture (using TRAINING config) ---
+    # We need the training config to know the model architecture params
+    # Note: This assumes training config format is loadable; might need a dedicated trainer config validator
     model = None
+    training_config_path = config.training_config
     try:
-        model_name = config.get('model', {}).get('name')
-        model_params = config.get('model', {}).get('params', {})
+        logger.info(f"Loading training configuration for model architecture: {training_config_path}")
+        if not Path(training_config_path).exists():
+             raise FileNotFoundError(f"Training configuration file not found: {training_config_path}")
+        with open(training_config_path, 'r') as f:
+             # Warning: Assuming training config is simple dict loadable by pyyaml
+             # A proper solution would use a validated TrainingConfig Pydantic model
+             train_config_data = yaml.safe_load(f) 
+             if not train_config_data or 'model' not in train_config_data:
+                 raise ValueError("Training config missing or does not contain 'model' section.")
+            
+        model_config = train_config_data['model']
+        model_name = model_config.get('name')
+        model_params = model_config.get('params', {})
         if not model_name:
             raise ValueError("Model name ('model.name') not found in configuration.")
         
         logger.info(f"Instantiating model architecture: {model_name}")
         ModelClass = models.get_model(model_name)
-        model = ModelClass(**model_params) # Instantiate architecture
+        model = ModelClass(**model_params)
+        model.to(device) # Move model to device BEFORE loading state dict
 
+        # --- Load Model Checkpoint --- 
         logger.info(f"Loading model weights from checkpoint: {args.checkpoint}")
-        # Load model state only, no need for optimizer/scheduler
-        model, _, _, checkpoint_info = Trainer.load_model(
-            checkpoint_path=args.checkpoint, 
-            model=model, 
-            device=device,
-            load_optimizer_state=False,
-            load_scheduler_state=False
-        ) 
-        logger.info(f"Model loaded successfully from epoch {checkpoint_info.get('epoch', 'N/A')}.")
+        checkpoint = torch.load(args.checkpoint, map_location=device)
+        # Handle different checkpoint formats (e.g., containing 'model_state_dict')
+        if 'model_state_dict' in checkpoint:
+             model_state_dict = checkpoint['model_state_dict']
+             epoch = checkpoint.get('epoch', 'N/A')
+             logger.info(f"Loading model_state_dict from epoch {epoch}.")
+        elif 'state_dict' in checkpoint: # Another common pattern
+            model_state_dict = checkpoint['state_dict']
+            epoch = checkpoint.get('epoch', 'N/A')
+            logger.info(f"Loading state_dict from epoch {epoch}.")
+        else:
+             # Assume the checkpoint *is* the state_dict
+             model_state_dict = checkpoint
+             logger.info("Loading entire checkpoint file as state_dict.")
+            
+        # Load the state dict
+        model.load_state_dict(model_state_dict)
+        logger.info(f"Model weights loaded successfully from {args.checkpoint}")
         model.eval() # IMPORTANT: Ensure model is in evaluation mode for interpretation
 
-    except FileNotFoundError:
-        logger.error(f"Checkpoint file not found: {args.checkpoint}")
+    except FileNotFoundError as e:
+        logger.error(f"File not found during model/config loading: {e}")
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing training config YAML file {training_config_path}: {e}", exc_info=True)
         sys.exit(1)
     except KeyError as e:
         logger.error(f"Missing key in checkpoint or config during model loading: {e}", exc_info=True)
@@ -187,207 +187,160 @@ def interpret_main(args):
         logger.error(f"Error loading model: {e}", exc_info=True)
         sys.exit(1)
 
-    # --- Load Input Data (Subtask 13.3) ---
+    # --- Load Input Data (using HDF5Dataset) ---
     interpret_loader = None
+    dataset_len = 0
     try:
-        interpret_data_path = args.input_data # Use the path provided via CLI argument
-        if not interpret_data_path:
-            # Fallback to config if needed, but CLI should be primary for interpret data
-            interpret_data_path = config.get('data', {}).get('interpret_path') 
-            if not interpret_data_path:
-                 raise ValueError("Interpretation input data path not specified via --input-data argument.")
+        interpret_data_path = Path(args.input_data) # Use Path object
+        if not interpret_data_path.exists():
+            raise FileNotFoundError(f"Interpretation input data file not found: {interpret_data_path}")
         
-        # Determine batch size (CLI arg overrides config)
-        batch_size = args.batch_size or config.get('data', {}).get('batch_size', 32) 
-        
-        # Create a config structure for create_dataloaders
-        data_config = config.get('data', {}).copy()
-        data_config['batch_size'] = batch_size
-        # Use a specific key for interpretation data path
-        data_config['interpret_path'] = interpret_data_path 
-        data_config['shuffle_interpret'] = False # Don't shuffle interpretation data
-        
+        # Note: Config object `config` is now InterpretConfig, doesn't have batch size directly.
+        # Batch size is mainly a CLI concern for interpretation.
+        batch_size = args.batch_size if args.batch_size else config.interpretation.batch_size # Use config batch_size as default
+        num_workers = 0 # Usually set to 0 for interpretation unless I/O is bottleneck
+
         logger.info(f"Loading interpretation input data from: {interpret_data_path} with batch size: {batch_size}")
 
-        # Use create_dataloaders, assuming it can handle an 'interpret' split
-        # This might require modification of create_dataloaders later
-        # It should ideally return inputs ONLY, or inputs and dummy targets
-        _, _, interpret_loader = create_dataloaders(data_config, splits=['interpret']) 
-
-        if interpret_loader is None:
-             raise RuntimeError("create_dataloaders did not return an interpretation loader for the 'interpret' split.")
+        # Directly use HDF5Dataset and DataLoader
+        interpret_dataset = HDF5Dataset(h5_path=interpret_data_path)
+        dataset_len = len(interpret_dataset)
+        if dataset_len == 0:
+            raise ValueError(f"Input data file {interpret_data_path} contains 0 samples.")
+            
+        # Collate function might be needed if HDF5Dataset returns dicts/non-standard types
+        # For now, assume default collate works if features/targets are tensors
+        interpret_loader = DataLoader(
+            interpret_dataset,
+            batch_size=batch_size,
+            shuffle=False, # Never shuffle interpretation data
+            num_workers=num_workers, 
+            pin_memory=True if device == torch.device('cuda') else False # Explicit check for cuda device
+        )
 
         logger.info("Interpretation input data loaded successfully.")
 
-    except FileNotFoundError:
-        logger.error(f"Interpretation input data file not found: {interpret_data_path}")
+    except FileNotFoundError as e:
+        logger.error(f"File not found during data loading: {e}")
         sys.exit(1)
     except ValueError as e:
         logger.error(f"Configuration error during data loading: {e}", exc_info=True)
         sys.exit(1)
     except RuntimeError as e:
         logger.error(f"Data loading runtime error: {e}", exc_info=True)
-        logger.error("This might indicate that create_dataloaders needs adjustment for interpretation mode.")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Error loading interpretation input data: {e}", exc_info=True)
         sys.exit(1)
 
-    # --- Initialize Interpreter (Subtask 13.4) ---
-    interpreter = None
-    try:
-        logger.info("Initializing ModelInterpreter...")
-        # Ensure model is correctly loaded and on the right device before passing
-        if model is None:
-             raise RuntimeError("Model object is None, cannot initialize interpreter.")
-        
-        interpreter = ModelInterpreter(model, device=device)
-        logger.info("ModelInterpreter initialized successfully.")
-    except Exception as e:
-        logger.error(f"Error initializing ModelInterpreter: {e}", exc_info=True)
-        sys.exit(1)
-
-    # --- Run Interpretation Loop (Subtask 13.5) ---
-    logger.info("Starting interpretation loop...")
+    # --- Run Interpretation Loop (Subtask 28.4) ---
     all_attributions = []
-    all_inputs = [] # Store inputs for context/visualization if needed
-    # all_ids = []    # Store sample IDs if available from loader
+    all_coordinates = [] # Store coordinates corresponding to attributions
+    interpret_params = config.interpretation
+    ig_params = interpret_params.integrated_gradients
 
+    logger.info("Calculating Integrated Gradients attributions...")
     try:
-        # Determine baseline - currently only supports 'zero'
-        # Future: implement 'random', 'mean', or load from file based on args.baseline
-        baseline_tensor = None # Will be generated per batch if needed
-        if args.baseline != 'zero':
-            logger.warning(f"Baseline type '{args.baseline}' is not fully supported yet. Using zero baseline.")
-            # Implement other baseline logic here if needed
-        
-        batch_count = 0
-        # Wrap loader with tqdm for progress bar
-        for batch in tqdm(interpret_loader, desc="Interpreting batches"):
-            batch_count += 1
-            # --- Prepare Batch Data ---
-            # Assuming loader yields (inputs) or (inputs, targets) or (inputs, targets, ids)
-            # We only strictly need inputs for interpretation
-            if isinstance(batch, (list, tuple)):
-                inputs = batch[0] 
-                # ids = batch[2] if len(batch) > 2 else None # Example ID handling
-            elif isinstance(batch, torch.Tensor):
-                inputs = batch
-                # ids = None
-            else:
-                 logger.warning(f"Unexpected batch type in interpretation loader: {type(batch)}. Skipping batch.")
-                 continue
-                 
-            inputs = inputs.to(device)
-            
-            # --- Prepare Baselines --- 
-            # Create zero baseline matching the input batch shape
-            if args.baseline == 'zero':
-                baseline_tensor = torch.zeros_like(inputs)
-            # Add other baseline generation logic here if needed
-            else:
-                 baseline_tensor = torch.zeros_like(inputs) # Fallback for now
-
-            # --- Calculate Attributions --- 
-            if interpreter:
-                attributions = interpreter.calculate_attributions(
-                    inputs=inputs,
-                    baselines=baseline_tensor,
-                    target=args.target, # Use the specified target index
-                    n_steps=args.n_steps
-                )
-
-                if attributions is not None:
-                    # Move results to CPU and store as numpy arrays
-                    all_attributions.append(attributions.cpu().numpy())
-                    all_inputs.append(inputs.cpu().numpy())
-                    # if ids is not None:
-                    #     all_ids.extend(ids)
-                else:
-                    logger.warning(f"Attribution calculation returned None for batch {batch_count}. Skipping.")
-            else:
-                logger.error("Interpreter is not initialized. Cannot calculate attributions.")
-                break # Exit loop if interpreter failed to initialize
-
-        logger.info(f"Interpretation loop completed over {batch_count} batches.")
+        for batch in tqdm(interpret_loader, desc="Calculating Attributions", total=len(interpret_loader)):
+             features, _, coordinates_batch = batch # HDF5Dataset now returns coordinates
+             features = features.to(device)
+             
+             # --- Baseline Generation --- 
+             baseline = generate_baseline(
+                 baseline_type=ig_params.baseline_type,
+                 input_batch=features,
+                 custom_path=ig_params.custom_baseline_path, 
+                 seed=config.interpretation.seed # Pass seed from config
+             )
+             baseline = baseline.to(device)
+             
+             # --- Attribution Calculation --- 
+             # Pass the model directly, ensure it's on the correct device
+             attributions_batch = calculate_integrated_gradients(
+                 model=model,
+                 inputs=features,
+                 baseline=baseline,
+                 target_index=ig_params.target_output_index,
+                 n_steps=ig_params.n_steps
+             )
+             
+             # --- Collect Results --- 
+             all_attributions.append(attributions_batch.cpu().detach().numpy())
+             # Append coordinates for this batch
+             all_coordinates.extend(coordinates_batch) # HDF5Dataset returns list of dicts
 
     except Exception as e:
-        logger.error(f"Error during interpretation loop: {e}", exc_info=True)
+        logger.error(f"Error during attribution calculation: {e}", exc_info=True)
         sys.exit(1)
 
-    # --- Process and Save Results (Subtask 13.6) ---
-    logger.info("Processing and saving interpretation results...")
+    logger.info("Attribution calculation complete.")
 
+    # --- Aggregate Results ---
     if not all_attributions:
-        logger.warning("No attributions were generated. Skipping result processing and saving.")
-    else:
-        try:
-            # Concatenate results from all batches
-            logger.debug(f"Concatenating attributions from {len(all_attributions)} batches.")
-            all_attributions_np = np.concatenate(all_attributions, axis=0)
-            all_inputs_np = np.concatenate(all_inputs, axis=0) # Concatenate inputs as well
-            logger.info(f"Aggregated attributions shape: {all_attributions_np.shape}")
-            logger.info(f"Aggregated inputs shape: {all_inputs_np.shape}")
+        logger.error("No attributions were generated. Exiting.")
+        sys.exit(1)
+        
+    try:
+        logger.info("Aggregating attribution results...")
+        final_attributions = np.concatenate(all_attributions, axis=0)
+        logger.info(f"Final aggregated attributions shape: {final_attributions.shape}")
+        # Sanity check: Ensure coordinates match final attributions
+        if len(all_coordinates) != final_attributions.shape[0]:
+             logger.warning(f"Mismatch between aggregated coordinates ({len(all_coordinates)}) and attributions ({final_attributions.shape[0]}). This might indicate an issue.")
+             # Decide whether to proceed or exit? For now, log warning.
 
-            # Save raw attributions if requested
-            if args.save_attributions:
-                attr_file_path = os.path.join(args.output_dir, 'attributions.npy')
-                np.save(attr_file_path, all_attributions_np)
-                logger.info(f"Raw attributions saved to: {attr_file_path}")
+    except Exception as e:
+        logger.error(f"Error aggregating attribution results: {e}", exc_info=True)
+        sys.exit(1)
 
-            # Extract and save high-attribution regions if requested
-            if args.top_k or args.threshold:
-                logger.info(f"Extracting high attribution regions (top_k={args.top_k}, threshold={args.threshold}, abs_val={not args.no_abs_val})...")
-                if interpreter:
-                    # Pass the concatenated numpy array to the method (assuming it handles numpy)
-                    # Or convert back to tensor if the method expects tensor
-                    # Modify extract_high_attribution_regions if it only accepts tensors
-                    attributions_tensor_for_extraction = torch.from_numpy(all_attributions_np).to(device) # Example conversion if needed
-                    
-                    high_attr_indices = interpreter.extract_high_attribution_regions(
-                        # attributions=all_attributions_np, # If method accepts numpy
-                        attributions=attributions_tensor_for_extraction, # If method expects tensor
-                        threshold=args.threshold,
-                        top_k=args.top_k,
-                        abs_val=not args.no_abs_val # Use flag directly
-                    )
-                    
-                    if high_attr_indices is not None:
-                        indices_file_path = os.path.join(args.output_dir, 'high_attribution_indices.npy')
-                        np.save(indices_file_path, high_attr_indices)
-                        logger.info(f"High attribution indices saved to: {indices_file_path} (Shape: {high_attr_indices.shape})")
-                    else:
-                        logger.warning("Extraction of high attribution regions failed or returned None.")
-                else:
-                    logger.error("Interpreter not available for extracting regions.")
-
-            # Generate plots if not disabled
-            if not args.no_plots:
-                logger.info("Generating visualization plots (Placeholder)...")
-                # --- Plotting Logic (Placeholder) ---
-                # This section would involve using interpreter.visualize_attributions
-                # or custom matplotlib code tailored to the data type (e.g., sequence data).
-                # Example: Plot average attribution over sequence length, or heatmap for specific samples.
-                # Need to handle potentially large data (e.g., plot first N samples or aggregate).
-                # fig, axes = interpreter.visualize_attributions(
-                #     attributions=torch.from_numpy(all_attributions_np[:1]).to(device), # Example: visualize first sample
-                #     inputs=torch.from_numpy(all_inputs_np[:1]).to(device),
-                #     method='heat_map', 
-                #     sign='absolute_value',
-                #     title='Sample Attribution Heatmap'
-                # )
-                # if fig:
-                #     plot_path = os.path.join(args.output_dir, 'sample_attribution_plot.png')
-                #     fig.savefig(plot_path)
-                #     logger.info(f"Sample plot saved to: {plot_path}")
-                #     plt.close(fig)
-                pass # Placeholder for actual plotting implementation
-
-        except Exception as e:
-            logger.error(f"Error processing or saving results: {e}", exc_info=True)
-            sys.exit(1)
+    # --- Save Results (Subtask 28.5) ---
+    try:
+        if config.output.save_attributions:
+             logger.info("Saving final attributions...")
+             save_interpretation_results(
+                 output_dir=output_dir,
+                 filename_prefix=filename_prefix,
+                 attributions=final_attributions,
+                 coordinates=all_coordinates,
+                 interpret_config=config, # Pass the validated config
+                 cli_args=args # Pass CLI args for metadata
+             )
+        else:
+             logger.info("Skipping saving of raw attributions as per config.")
+             
+        # --- Feature Extraction ---
+        if config.feature_extraction.top_k is not None or config.feature_extraction.threshold is not None:
+            logger.info("Extracting important features...")
+            extract_and_save_features(
+                 output_dir=output_dir,
+                 filename_prefix=filename_prefix,
+                 attributions=final_attributions,
+                 coordinates=all_coordinates,
+                 feature_extraction_config=config.feature_extraction # Pass the sub-config
+            )
+        else:
+             logger.info("Skipping feature extraction as top_k/threshold not specified.")
+             
+        # --- Plotting (Optional) ---
+        if config.output.save_plots:
+             logger.info("Generating and saving plots...")
+             generate_and_save_plots(
+                 output_dir=output_dir,
+                 filename_prefix=filename_prefix,
+                 attributions=final_attributions,
+                 coordinates=all_coordinates,
+                 config=config # Pass full config if needed for plots
+             )
+        else:
+             logger.info("Skipping plot generation as per config.")
+             
+    except Exception as e:
+        logger.error(f"Error during saving or feature extraction: {e}", exc_info=True)
+        # Decide if we should exit or just warn? Exiting for now.
+        sys.exit(1)
 
     logger.info("EpiBench interpretation finished successfully.")
+    logger.info(f"Results saved in: {output_dir}")
 
 
 if __name__ == '__main__':

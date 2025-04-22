@@ -104,9 +104,9 @@ The `epibench` tool uses a command-line interface with several subcommands:
     epibench predict --config config/train_config.yaml --checkpoint output/training_run_01/best_model.pth --input-data data/new_samples.h5 -o output/predictions
     ```
 
-*   **Interpret Model:**
+*   **Interpret Model:** Calculate feature attributions (e.g., Integrated Gradients) to understand model predictions. See the [Interpretation Tutorial](docs/tutorial_interpret.md) for details.
     ```bash
-    epibench interpret --config config/train_config.yaml --checkpoint output/training_run_01/best_model.pth --input-data data/sample_to_interpret.h5 -o output/interpretation_results
+    epibench interpret --config config/interpret_config.yaml --checkpoint output/training_run_01/best_model.pth --input-data output/processed_data/interpret_subset.h5 -o output/interpretation_results
     ```
 
 *   **Compare Models/Groups:**

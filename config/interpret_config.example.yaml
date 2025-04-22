@@ -1,0 +1,87 @@
+# Example configuration for the 'epibench interpret' command
+
+# --- Required --- #
+# Path to the configuration file used during the *training* of the model.
+# This is needed to reconstruct the model architecture and potentially data loading parameters.
+training_config: path/to/training_output/train_config.yaml 
+
+# --- Interpretation Settings --- #
+interpretation:
+  # Method to use.
+  method: IntegratedGradients # Currently only 'IntegratedGradients' is supported via the CLI
+
+  # Parameters specific to Integrated Gradients.
+  integrated_gradients:
+    # Number of steps for the approximation integral.
+    n_steps: 50 # Default: 50
+    
+    # Baseline for comparison. Options:
+    # - "zero": A tensor of zeros with the same shape as the input.
+    # - "random": Use Gaussian noise based on input distribution.
+    # - "custom": Load a baseline from the file specified in 'custom_baseline_path'.
+    baseline_type: "zero" # Default: "zero"
+    
+    # Path to custom baseline file (e.g., .npy or .h5). 
+    # Required and must be a valid file path ONLY if baseline_type is "custom".
+    # custom_baseline_path: path/to/baseline_samples.npy
+    
+    # Index of the target output neuron to attribute for. 
+    # For single-output regression models, this is typically 0.
+    target_output_index: 0 # Default: 0
+
+# --- Feature Extraction Settings (Optional) --- #
+feature_extraction:
+  # Calculate attributions based on their absolute values before ranking/thresholding.
+  use_absolute_value: true # Default: true
+  
+  # Option 1: Extract top K features based on attribution score.
+  # If both top_k and threshold are specified, top_k takes precedence.
+  # top_k: 100 # Default: None
+  
+  # Option 2: Extract features with attribution score (absolute if use_absolute_value=true) above a threshold.
+  threshold: 0.1 # Default: None (set to a float value >= 0 if desired)
+
+# --- Output Settings (Optional) --- #
+output:
+  # Whether to save the raw attribution scores (can be large).
+  save_attributions: true # Default: true (Saves to <output_dir>/<filename_prefix>_attributions.h5 or .npy)
+  
+  # Whether to generate and save visualizations (if implemented for the method).
+  generate_plots: true # Default: true
+  
+  # Prefix for output filenames (e.g., attribution scores, plots).
+  # The CLI -o/--output-dir determines the directory.
+  filename_prefix: "interpretation" # Default: "interpretation"
+
+# --- Visualization Settings (Required if output.generate_plots is true) --- #
+visualization:
+  # List of histone mark names, order determines plot order and must match paths list.
+  histone_names: 
+    - H3K4me
+    - H3K4me3
+    - H3K36me3
+    - H3K27me3
+    - H3K27ac
+    - H3K9me3
+  
+  # List of paths to the ground truth BigWig files corresponding to histone_names.
+  # These are REQUIRED if generate_plots is true.
+  histone_bigwig_paths:
+    - /path/to/H3K4me.bw
+    - /path/to/H3K4me3.bw
+    - /path/to/H3K36me3.bw
+    - /path/to/H3K27me3.bw
+    - /path/to/H3K27ac.bw
+    - /path/to/H3K9me3.bw
+
+  # Optional: Resolution (dots per inch) for saved plot images.
+  plot_dpi: 150 # Default: 150
+
+  # Optional: Maximum number of individual sample plots to generate.
+  # Set to 0 or null/None to disable individual plots (e.g., if only aggregate plots are desired).
+  max_samples_to_plot: 20 # Default: 20
+
+# --- Logging Settings (Optional) --- #
+logging_config:
+  level: INFO # Default: INFO. Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # file: path/to/interpret_log.log # Optional: Path to save log file 

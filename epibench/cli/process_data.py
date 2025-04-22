@@ -337,11 +337,11 @@ def process_data_main(args):
                                         chunks=chunk_shape_coords, compression='gzip')
                  logger.info(f"  Creating dataset 'start' with shape (0,) and chunk shape {chunk_shape_coords}")
                  handle.create_dataset('start', shape=(0,), maxshape=(None,), 
-                                        dtype=np.int64, 
+                                        dtype=np.int64, # Using int64 for genomic coordinates
                                         chunks=chunk_shape_coords, compression='gzip')
                  logger.info(f"  Creating dataset 'end' with shape (0,) and chunk shape {chunk_shape_coords}")
                  handle.create_dataset('end', shape=(0,), maxshape=(None,), 
-                                        dtype=np.int64, 
+                                        dtype=np.int64, # Using int64 for genomic coordinates
                                         chunks=chunk_shape_coords, compression='gzip') 
                                       
                  # Add metadata (optional) - Accessing validated config fields
@@ -521,17 +521,45 @@ def process_data_main(args):
                 # Assign data to the new slots
                 h5_handle['features'][current_size] = features_matrix
                 h5_handle['targets'][current_size] = np.array([[target_methylation]], dtype=np.float32)
-                h5_handle['chrom'][current_size] = chrom
-                h5_handle['start'][current_size] = bed_start
-                h5_handle['end'][current_size] = bed_end
+                h5_handle['chrom'][current_size] = chrom # Assumes chrom is already a string
+                h5_handle['start'][current_size] = bed_start # Assumes bed_start is int
+                h5_handle['end'][current_size] = bed_end # Assumes bed_end is int
 
-        logger.info(f"Finished processing. Total regions processed: {current_size}. Total regions skipped: {current_size - len(split_indices['train']) - len(split_indices['validation']) - len(split_indices['test'])}.")
+        # --- Validation Check (Added as per Plan Item 6) ---
+        logger.info("Validating final dataset counts...")
+        validation_passed = True
+        for split_name, h5_handle in h5_handles.items():
+            if h5_handle:
+                 count = h5_handle['features'].shape[0]
+                 target_count = h5_handle['targets'].shape[0]
+                 chrom_count = h5_handle['chrom'].shape[0]
+                 start_count = h5_handle['start'].shape[0]
+                 end_count = h5_handle['end'].shape[0]
+                 
+                 if not (count == target_count == chrom_count == start_count == end_count):
+                     logger.error(f"Dataset count mismatch in {split_name} ({h5_handle.filename}): Features={count}, Targets={target_count}, Chrom={chrom_count}, Start={start_count}, End={end_count}")
+                     validation_passed = False
+                 else:
+                      logger.info(f"  - {split_name}: {count} entries validated successfully for all datasets.")
+            else:
+                 logger.warning(f"No handle found for {split_name} split during validation.")
+                 validation_passed = False # Treat missing handle as failure
+
+        if not validation_passed:
+             logger.error("Dataset validation failed due to count mismatches.")
+             # Optionally raise an error or exit here if strict validation is required
+             # sys.exit(1) 
+        else:
+             logger.info("All dataset counts validated successfully.")
+        # --- End Validation Check ---
+
+        logger.info(f"Finished processing. Total regions processed: {current_size}. Total regions skipped: {current_size - len(split_indices['train']) - len(split_indices['validation']) - len(split_indices['test'])}.") # Note: current_size might not be the right total metric here if loops failed
         logger.info(f"Processed data saved to HDF5 files in: {args.output_dir}")
         # Report counts per split
         for split_name, h5_handle in h5_handles.items():
             if h5_handle:
                  count = h5_handle['features'].shape[0]
-                 logger.info(f"  - {split_name}: {count} regions saved to {h5_handle.filename}")
+                 logger.info(f"  - {split_name}: {count} regions saved to {h5_handle.filename}") # Log final count again
 
     except Exception as e:
         logger.error(f"An error occurred during data processing: {e}", exc_info=True)

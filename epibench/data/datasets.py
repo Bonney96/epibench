@@ -3,11 +3,13 @@ from torch.utils.data import Dataset
 import h5py
 import numpy as np
 import os
-from typing import Optional, Callable, List, Dict, Tuple, Any
+from typing import Optional, Callable, List, Dict, Tuple, Any, Union
 import warnings
 import logging
 
 logger = logging.getLogger(__name__)
+
+CoordinateInfo = Dict[str, Union[str, int]]  # Type hint for coordinate information
 
 class SequenceDataset(Dataset):
     """PyTorch Dataset for loading sequence and epigenetic data.
@@ -171,15 +173,15 @@ class LeakageFreeSequenceDataset(SequenceDataset):
         return super().__getitem__(original_idx)
 
 class HDF5Dataset(Dataset):
-    """PyTorch Dataset for loading data from HDF5 files.
+    """PyTorch Dataset for loading data from HDF5 files created by EpiBench.
 
-    Assumes the HDF5 file contains at least 'features' and 'targets' datasets,
-    and optionally 'chromosomes' and 'coordinates'.
+    Handles loading 'features' and 'targets' datasets. Optionally loads genomic
+    coordinates ('chrom', 'start', 'end') if they exist in the file.
 
     Args:
         h5_path (str): Path to the HDF5 file.
-        transform (Optional[Callable]): Optional transform to be applied on a sample.
-        target_transform (Optional[Callable]): Optional transform to be applied on a label.
+        transform (Optional[Callable]): Optional transform applied to features.
+        target_transform (Optional[Callable]): Optional transform applied to targets.
     """
     def __init__(self, h5_path: str, transform: Optional[Callable] = None, target_transform: Optional[Callable] = None):
         super().__init__()
@@ -187,96 +189,192 @@ class HDF5Dataset(Dataset):
         self.transform = transform
         self.target_transform = target_transform
         self._file_handle: Optional[h5py.File] = None
+        self._features_ds: Optional[h5py.Dataset] = None
+        self._targets_ds: Optional[h5py.Dataset] = None
+        self._chrom_ds: Optional[h5py.Dataset] = None
+        self._start_ds: Optional[h5py.Dataset] = None
+        self._end_ds: Optional[h5py.Dataset] = None
         self._length: Optional[int] = None
+        self.has_coordinates: bool = False
 
         # Validate file existence and basic structure immediately
         try:
             with h5py.File(self.h5_path, 'r') as f:
                 if 'features' not in f:
-                    raise ValueError(f"HDF5 file {h5_path} is missing required dataset 'features'.")
+                    logger.error(f"HDF5 file {h5_path} is missing required dataset 'features'.")
+                    raise ValueError(f"HDF5 file {h5_path} missing required dataset 'features'.")
                 if 'targets' not in f:
-                    raise ValueError(f"HDF5 file {h5_path} is missing required dataset 'targets'.")
+                    logger.error(f"HDF5 file {h5_path} is missing required dataset 'targets'.")
+                    raise ValueError(f"HDF5 file {h5_path} missing required dataset 'targets'.")
                 self._length = f['features'].shape[0]
                 if f['targets'].shape[0] != self._length:
-                     raise ValueError(f"Mismatch in number of samples between 'features' ({self._length}) and 'targets' ({f['targets'].shape[0]}) in {h5_path}.")
+                    error_msg = f"Feature count ({self._length}) and target count ({f['targets'].shape[0]}) mismatch in {h5_path}."
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
+                # Check for coordinate datasets
+                coord_keys = ['chrom', 'start', 'end']
+                if all(key in f for key in coord_keys):
+                    if (f['chrom'].shape[0] == self._length and 
+                        f['start'].shape[0] == self._length and 
+                        f['end'].shape[0] == self._length):
+                        self.has_coordinates = True
+                        logger.info(f"Coordinate datasets ('chrom', 'start', 'end') found in {h5_path} and match features length.")
+                    else:
+                        logger.warning(f"Coordinate datasets found in {h5_path}, but their lengths do not match the features dataset. Coordinates will not be loaded.")
+                        self.has_coordinates = False
+                else:
+                    logger.info(f"Coordinate datasets ('chrom', 'start', 'end') not found or incomplete in {h5_path}. Coordinates will not be loaded.")
+                    self.has_coordinates = False
+
         except FileNotFoundError:
-            logger.error(f"HDF5 file not found: {self.h5_path}")
+            logger.error(f"HDF5 file not found: {h5_path}")
             raise
         except Exception as e:
-            logger.error(f"Error initializing HDF5Dataset from {self.h5_path}: {e}", exc_info=True)
-            raise
+            logger.error(f"Failed to open or validate HDF5 file {h5_path}: {e}", exc_info=True) # Log with stacktrace
+            raise # Re-raise after logging
 
         logger.info(f"Initialized HDF5Dataset from {self.h5_path}. Found {self._length} samples.")
 
     def _open_file(self):
-        """Opens the HDF5 file if it's not already open. Should be called by __getitem__."""
+        """Opens the HDF5 file if it's not already open and assigns dataset handles."""
         if self._file_handle is None:
             try:
                 self._file_handle = h5py.File(self.h5_path, 'r')
-                logger.debug(f"Opened HDF5 file for reading: {self.h5_path}")
+                self._features_ds = self._file_handle['features']
+                self._targets_ds = self._file_handle['targets']
+                if self.has_coordinates:
+                    self._chrom_ds = self._file_handle['chrom']
+                    self._start_ds = self._file_handle['start']
+                    self._end_ds = self._file_handle['end']
+                logger.debug(f"Opened HDF5 file: {self.h5_path}")
             except Exception as e:
-                logger.error(f"Failed to open HDF5 file {self.h5_path} in worker process: {e}", exc_info=True)
-                raise RuntimeError(f"Could not open HDF5 file: {self.h5_path}") from e
+                logger.error(f"Failed to open HDF5 file {self.h5_path} in worker process: {e}")
+                # Reset handles to ensure we don't use potentially bad ones
+                self._file_handle = None
+                self._features_ds = None
+                self._targets_ds = None
+                self._chrom_ds = None
+                self._start_ds = None
+                self._end_ds = None
+                raise # Re-raise to propagate the error
 
     def __len__(self) -> int:
-        """Returns the number of samples in the dataset."""
+        """Return the total number of samples in the dataset."""
         if self._length is None:
-            # This should have been set in __init__, but as a fallback:
-            try:
-                with h5py.File(self.h5_path, 'r') as f:
-                    self._length = f['features'].shape[0]
-            except Exception as e:
-                logger.error(f"Failed to determine length from {self.h5_path}: {e}")
-                return 0 # Return 0 if length cannot be determined
+            # Should have been set in init, but as a fallback:
+            self._open_file()
+            self._length = self._features_ds.shape[0] if self._features_ds is not None else 0
+            logger.warning("__len__ called before HDF5 length was initialized.")
         return self._length
 
-    def __getitem__(self, idx: int) -> Tuple[Any, Any]:
-        """Loads and returns a sample from the dataset at the given index.
+    def __getitem__(self, idx: int) -> Tuple[Any, Any, CoordinateInfo]:
+        """Fetch a sample (features, target, coordinates) at the given index.
 
-        Opens the HDF5 file if necessary (handle worker processes).
+        Opens the HDF5 file if necessary (for use with multiprocessing in DataLoader).
 
         Args:
-            idx (int): Index of the sample to retrieve.
+            idx: The index of the sample to retrieve.
 
         Returns:
-            Tuple[Any, Any]: A tuple containing the features and the target.
-                             The types depend on the transforms applied.
+            A tuple containing:
+                - features: Data features (typically a torch.Tensor).
+                - target: Target value(s) (typically a torch.Tensor).
+                - coordinates: Dictionary with 'chrom', 'start', 'end' if available,
+                               otherwise an empty dictionary.
         """
-        self._open_file() # Ensure file is open in the current worker process
+        self._open_file() # Ensure file handle is open, especially for multiprocessing
 
-        if self._file_handle is None:
-             raise RuntimeError(f"HDF5 file handle is not open for {self.h5_path}")
+        if self._features_ds is None or self._targets_ds is None:
+             # This might happen if _open_file failed
+             raise RuntimeError(f"HDF5 dataset handles not initialized for {self.h5_path}")
 
         try:
-            features = self._file_handle['features'][idx]
-            target = self._file_handle['targets'][idx]
+            # Get features and target
+            features = self._features_ds[idx]
+            target = self._targets_ds[idx]
 
-            # Convert numpy arrays to PyTorch tensors if they are not already
-            # Use float32 for features, and determine target type appropriately
-            # (often float32 for regression, long for classification)
-            if not isinstance(features, torch.Tensor):
-                features = torch.from_numpy(np.array(features, dtype=np.float32))
-            if not isinstance(target, torch.Tensor):
-                 # Assuming regression target, adjust if classification
-                target = torch.from_numpy(np.array(target, dtype=np.float32))
-
-            # Apply transforms if they exist
+            # Apply transforms if provided
             if self.transform:
                 features = self.transform(features)
             if self.target_transform:
                 target = self.target_transform(target)
 
-            return features, target
+            # Get coordinates if available
+            coordinates = {}
+            if self.has_coordinates:
+                if self._chrom_ds is not None and self._start_ds is not None and self._end_ds is not None:
+                    try:
+                        chrom_val = self._chrom_ds[idx]
+                        start_val = int(self._start_ds[idx]) # Ensure integer
+                        end_val = int(self._end_ds[idx]) # Ensure integer
+                        # Decode chromosome name if it's bytes
+                        chrom_str = chrom_val.decode('utf-8') if isinstance(chrom_val, bytes) else str(chrom_val)
+                        coordinates = {'chrom': chrom_str, 'start': start_val, 'end': end_val}
+                    except IndexError:
+                         logger.error(f"IndexError fetching coordinates for index {idx} in {self.h5_path}. Dataset length: {self._length}")
+                         raise # Re-raise to indicate a problem
+                    except Exception as e:
+                         logger.error(f"Error fetching coordinates for index {idx} in {self.h5_path}: {e}", exc_info=True)
+                         # Return empty dict for this item, but log the error
+                         coordinates = {}
+                else:
+                     # This case should ideally not happen if has_coordinates is True and _open_file worked
+                     logger.warning(f"Coordinate datasets were expected but handles are None for index {idx} in {self.h5_path}")
+                     coordinates = {}
+
+            # Return features, target, and coordinates
+            return features, target, coordinates
 
         except IndexError:
-             logger.error(f"Index {idx} out of bounds for dataset size {self._length} in {self.h5_path}.")
-             raise
+            logger.error(f"Index {idx} out of range for HDF5 dataset {self.h5_path} with length {self._length}")
+            raise # Re-raise the IndexError
         except Exception as e:
-            logger.error(f"Error loading item {idx} from {self.h5_path}: {e}", exc_info=True)
-            raise # Reraise the exception after logging
+            # Catch potential errors during data loading or transform
+            logger.error(f"Error loading item {idx} from {self.h5_path}: {e}", exc_info=True) # Log with stacktrace
+            # Decide how to handle: re-raise, return None, return dummy data?
+            # Re-raising is often safest to signal the problem upstream.
+            raise
+
+    def get_coordinates(self, idx: int) -> Optional[CoordinateInfo]:
+        """Retrieve genomic coordinates for a specific index, if available.
+
+        Args:
+            idx: Index of the sample.
+
+        Returns:
+            Dictionary containing 'chrom', 'start', 'end' keys if coordinates
+            are available, otherwise None.
+
+        Raises:
+            IndexError: If the index is out of bounds.
+            RuntimeError: If HDF5 dataset handles are not initialized.
+        """
+        if not self.has_coordinates:
+            return None
+
+        self._open_file() # Ensure file is open
+
+        if self._chrom_ds is None or self._start_ds is None or self._end_ds is None:
+            # This indicates an issue during file opening or state corruption
+            raise RuntimeError(f"Coordinate dataset handles not initialized for {self.h5_path} despite has_coordinates=True.")
+
+        if not 0 <= idx < self.__len__():
+             raise IndexError(f"Index {idx} out of range for dataset size {self.__len__()}")
+
+        try:
+            chrom_val = self._chrom_ds[idx]
+            start_val = int(self._start_ds[idx])
+            end_val = int(self._end_ds[idx])
+            chrom_str = chrom_val.decode('utf-8') if isinstance(chrom_val, bytes) else str(chrom_val)
+            return {'chrom': chrom_str, 'start': start_val, 'end': end_val}
+        except Exception as e:
+            logger.error(f"Error retrieving coordinates for index {idx} from {self.h5_path}: {e}", exc_info=True)
+            # Depending on desired behavior, could return None or re-raise
+            return None # Return None on error accessing specific coordinates
 
     def close(self):
-        """Closes the HDF5 file handle if it's open."""
+        """Close the HDF5 file handle if it's open."""
         if self._file_handle is not None:
             try:
                 self._file_handle.close()
