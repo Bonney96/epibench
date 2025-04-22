@@ -1,0 +1,114 @@
+# Training Configuration for AML 263578 (Region Based)
+
+# Data loading parameters
+data:
+  # Path to the training data matrix (output from process-data).
+  train_path: ./processed_data/AML_263578_region_based/train.h5 
+  # Path to the validation data matrix (output from process-data).
+  val_path: ./processed_data/AML_263578_region_based/validation.h5
+  # Path to the test data matrix (output from process-data).
+  test_path: ./processed_data/AML_263578_region_based/test.h5
+  
+  # Batch size for training and validation.
+  batch_size: 64
+  # Number of worker processes for loading data.
+  num_workers: 0 # Set to 0 to avoid shared memory issues
+  # Whether to shuffle training data each epoch.
+  shuffle_train: true
+  # Whether to shuffle validation data (usually false).
+  shuffle_val: false
+
+# Model definition
+model:
+  # Name of the model architecture to use (must be registered in epibench.models).
+  name: SeqCNNRegressor
+  
+  # Parameters specific to the SeqCNNRegressor model.
+  params:
+    # Number of input channels/tracks (verify this matches data processing output).
+    input_channels: 11 
+    # Configuration for the multi-branch CNN.
+    # List of filter counts for each convolutional layer in a branch.
+    num_filters: 64 # Renamed from cnn_filters and assume a single value is expected per the __init__
+    # List of kernel sizes, each defining a separate branch.
+    kernel_sizes: [9, 25, 51]
+    # Activation function ('ReLU', 'GELU', etc.).
+    activation: ReLU
+    
+    # Configuration for the fully connected layers after CNN branches.
+    # List of hidden unit counts for each FC layer.
+    fc_units: [1024, 512]
+    # Dropout rate applied after FC layers.
+    dropout_rate: 0.4
+    # Whether to use Batch Normalization in CNN and FC layers.
+    use_batch_norm: true
+
+# Training process parameters
+training:
+  # Name of the optimizer (e.g., 'Adam', 'AdamW', 'SGD').
+  optimizer: AdamW
+  # Parameters for the optimizer.
+  optimizer_params:
+    lr: 0.0005
+    weight_decay: 0.01
+    # Other optimizer-specific params (e.g., betas for Adam, momentum for SGD)
+
+  # Name of the loss function ('MSELoss', 'L1Loss', etc.).
+  loss_function: MSELoss
+  # Parameters for the loss function (if any).
+  # loss_params: {}
+
+  # Learning rate scheduler configuration (optional).
+  scheduler: ReduceLROnPlateau # Example: Reduce learning rate on plateau
+  scheduler_params:
+    mode: min       # Monitor validation loss ('min') or metric ('max')
+    factor: 0.1     # Factor by which LR is reduced
+    patience: 3     # Number of epochs with no improvement before reducing LR
+    verbose: true
+  # monitor_metric: val_loss # Metric to monitor (default: validation loss)
+
+  # Total number of training epochs.
+  epochs: 50
+  
+  # Early stopping configuration.
+  early_stopping_patience: 7 # Number of epochs to wait for improvement before stopping.
+  # early_stopping_metric: val_loss # Metric to monitor (default: validation loss)
+  # early_stopping_mode: min # 'min' for loss, 'max' for accuracy/R2 etc.
+
+  # Device to use for training ('cuda', 'cpu', or specific GPU like 'cuda:0').
+  device: cuda 
+  
+  # Gradient clipping value (optional, set to 0 or null to disable).
+  gradient_clipping: 1.0 
+
+  # Use mixed precision training (requires compatible GPU).
+  use_amp: false 
+
+# Output configuration
+output:
+  # Directory to save checkpoints, logs, etc.
+  checkpoint_dir: ./training_results/AML_263578_SeqCNNRegressor
+  # filename_prefix: epibench_model
+  save_best_only: true # Only save the checkpoint with the best validation score.
+  save_period: 1 # Save checkpoint every N epochs (ignored if save_best_only=true).
+
+# Hyperparameter Optimization (HPO) settings (used if --hpo flag is passed to CLI)
+hpo:
+  enabled: false # This key primarily serves as a placeholder; actual HPO is triggered by CLI flag.
+  # Optuna study direction ('minimize' for loss, 'maximize' for R2/correlation).
+  direction: minimize
+  # Number of trials to run.
+  n_trials: 30
+  # Sampler to use ('TPE', 'Random', etc.).
+  sampler: TPE
+  # Pruner to use ('MedianPruner', 'HyperbandPruner', etc.).
+  pruner: MedianPruner
+  
+  # Define the hyperparameter search space.
+  # Syntax: param_name: [min, max] for float/int, or [choice1, choice2] for categorical.
+  search_space:
+    training.optimizer_params.lr: [0.0001, 0.01] # Log uniform scale often used
+    training.optimizer_params.weight_decay: [0.0, 0.1]
+    model.params.dropout_rate: [0.1, 0.5]
+    model.params.fc_units.0: [256, 1024] # Search space for the first FC layer units
+    # Add other parameters like cnn_filters, kernel_sizes if desired 

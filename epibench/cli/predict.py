@@ -19,7 +19,7 @@ if project_root not in sys.path:
 from epibench.config.config_manager import ConfigManager
 from epibench.utils.logging import LoggerManager
 from epibench.models import models # Assuming get_model exists
-from epibench.data.data_loader import create_dataloaders # Need a way to load prediction data
+from epibench.data.datasets import HDF5Dataset # Import dataset class directly
 from epibench.training.trainer import Trainer # To load model state
 
 logger = logging.getLogger(__name__)
@@ -120,8 +120,6 @@ def predict_main(args):
             checkpoint_path=args.checkpoint,
             model=model,
             device=device,
-            load_optimizer_state=False, # Don't load optimizer/scheduler
-            load_scheduler_state=False
         )
         logger.info(f"Model loaded successfully from epoch {checkpoint_info.get('epoch', 'N/A')}.")
         model.eval() # Set model to evaluation mode
@@ -144,25 +142,23 @@ def predict_main(args):
     try:
         # Determine batch size (CLI arg overrides config)
         batch_size = args.batch_size or config.get('data', {}).get('batch_size', 32)
-
-        # Create a config structure suitable for create_dataloaders
-        # Assuming create_dataloaders can handle a 'predict_path' or similar
-        # or that we modify it later. For now, we create a config dict.
-        data_config = config.get('data', {}).copy() # Get data section or empty dict
-        data_config['batch_size'] = batch_size
-        # Use a specific key for prediction data path to avoid conflict with train/val/test
-        data_config['predict_path'] = args.input_data 
-        data_config['shuffle_predict'] = False # Don't shuffle prediction data
+        # Determine num_workers from config
+        num_workers = config.get('data', {}).get('num_workers', 0)
+        # Determine pin_memory from config
+        pin_memory = config.get('data', {}).get('pin_memory', torch.cuda.is_available())
 
         logger.info(f"Loading prediction input data from: {args.input_data} with batch size: {batch_size}")
 
-        # Use create_dataloaders, assuming it can handle a 'predict' split
-        # This might require modification of create_dataloaders later
-        # It should return a loader yielding only inputs, or inputs and dummy targets
-        _, _, predict_loader = create_dataloaders(data_config, splits=['predict']) # Pass 'predict' split
-
-        if predict_loader is None:
-             raise RuntimeError("create_dataloaders did not return a prediction loader for the 'predict' split.")
+        # Directly create the dataset and dataloader for prediction
+        predict_dataset = HDF5Dataset(h5_path=args.input_data)
+        predict_loader = DataLoader(
+            dataset=predict_dataset,
+            batch_size=batch_size,
+            shuffle=False, # No shuffling for prediction
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            drop_last=False
+        )
 
         logger.info("Prediction input data loaded successfully.")
 
@@ -185,7 +181,9 @@ def predict_main(args):
     all_predictions = []
     with torch.no_grad():
         for batch in predict_loader:
-            inputs = batch # Adjust based on loader output for prediction
+            # Assuming batch is a tuple/list like (features, targets)
+            # We only need the features for prediction.
+            inputs = batch[0] # Get the features tensor from the batch
             inputs = inputs.to(device)
             outputs = model(inputs)
             all_predictions.append(outputs.cpu().numpy())

@@ -1,20 +1,20 @@
-# Configuration for processing AML sample 263578
+# Configuration for processing AML sample 463352
 
 # Input File Paths
 reference_genome: /storage1/fs1/dspencer/Active/spencerlab/refdata/hg38/sequence/hg38_mgi_patch.fa
-methylation_bed: /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578_aml_dmrs.bed
+methylation_bed: /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/463352/463352_aml_dmrs.bed
 histone_bigwigs:
-  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K27ac_R1.bigwig
-  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K27me3_R1.bigwig
-  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K36me3_R1.bigwig
-  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K4me_R1.bigwig
-  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K4me3_R1.bigwig
-  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K9me3_R1.bigwig
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/463352/463352-0923936_2_pb-H3K27ac_R1.bigwig
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/463352/463352-0923936_2_pb-H3K27me3_R1.bigwig
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/463352/463352-0923936_2_pb-H3K36me3_R1.bigwig
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/463352/463352-0923936_2_pb-H3K4me_R1.bigwig # Assuming this is the correct H3K4me file, double-check if needed
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/463352/463352-0923936_2_pb-H3K4me3_R1.bigwig
+  - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/463352/463352-0923936_2_pb-H3K9me3_R1.bigwig
   # Note: Ensure process_data.py correctly uses the 6th column (0-indexed 5) from the BED file if needed
 
 # Output File Path
 # This path is relative to where you run the command or absolute
-# output_hdf5: ./processed_data/AML_263578/processed_data.h5 
+# output_hdf5: ./processed_data/AML_463352/processed_data.h5 
 # The process-data command takes an --output-dir argument, which is where train/val/test splits are saved.
 # The combined HDF5 is currently saved within that output directory as 'processed_data.h5' by default.
 
@@ -38,4 +38,4 @@ random_seed: 42
 # Logging Configuration
 logging:
   level: INFO # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  # file: processing_aml_263578.log # Optional: specify a log file path relative to output dir 
+  # file: processing_aml_463352.log # Optional: specify a log file path relative to output dir 

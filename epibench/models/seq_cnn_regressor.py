@@ -53,12 +53,13 @@ class SeqCNNRegressor(nn.Module):
         self.conv_branches = nn.ModuleList() 
         self._build_conv_branches() # Build the conv branches
         
-        # Placeholder - Need to calculate the flattened size after conv branches
         # This will be done *after* building branches, potentially requiring a dummy forward pass
-        self._conv_output_size = self._calculate_conv_output_size() 
+        # self._conv_output_size = self._calculate_conv_output_size() # Old incorrect calculation
+        self._conv_output_size = self.num_branches * self.num_filters # Correct input dim after pooling
+        logger.info(f"Input dimension for FC layers (num_branches * num_filters): {self._conv_output_size}")
         
-        self.fc_layers = nn.Sequential() # Will hold the final fully connected layers
-        # self._build_fc_layers() # Build FC layers using _conv_output_size
+        # self.fc_layers = nn.Sequential() # Will hold the final fully connected layers - Remove empty init
+        self.fc_layers = self._build_fc_layers() # Build FC layers using _conv_output_size and assign
 
     def _build_conv_branches(self):
         """Creates the parallel convolutional branches."""
@@ -117,22 +118,66 @@ class SeqCNNRegressor(nn.Module):
         Returns:
             Output tensor (regression prediction), shape (batch_size, 1).
         """
-        # Placeholder forward pass
         # 1. Permute input: (N, SeqLen, Channels) -> (N, Channels, SeqLen)
+        # Check if input needs permutation (e.g., if it comes as (N, L, C))
+        if x.shape[1] == self.input_channels:
+            # Already (N, C, L)? No permute needed.
+            pass 
+        elif x.shape[2] == self.input_channels:
+             # Input is (N, L, C), permute to (N, C, L)
+             x = x.permute(0, 2, 1)
+        else:
+            raise ValueError(f"Unexpected input shape: {x.shape}. Expected channels={self.input_channels}")
+
         # 2. Pass through each conv branch
-        # 3. Flatten/Pool results from branches
-        # 4. Concatenate results
-        # 5. Pass through FC layers
+        branch_outputs = []
+        for branch in self.conv_branches:
+            branch_out = branch(x)
+            # The output here has shape (N, num_filters, L_out) after conv and pool
+            branch_outputs.append(branch_out)
+            
+        # 4. Concatenate results from all branches along the channel dimension
+        x_cat = torch.cat(branch_outputs, dim=1) 
+        # Shape is now (N, num_branches * num_filters, L_out)
+        # Note: L_out depends on the pooling in the branches
         
-        # This will be implemented in Subtask 5.4
-        
-        # Example: Return dummy output of correct shape for now
-        batch_size = x.shape[0]
-        return torch.randn(batch_size, 1, device=x.device) 
+        # 5. Global Average Pooling across the sequence dimension (L_out)
+        # Input shape: (N, C, L_out) -> Output shape: (N, C)
+        x_pooled = torch.mean(x_cat, dim=2)
+
+        # 6. Pass through the fully connected layers
+        x_fc = self.fc_layers(x_pooled) # fc_layers were built in __init__
+
+        # 7. Apply sigmoid activation
+        output = torch.sigmoid(x_fc)
+
+        return output
 
     # --- Placeholder methods for building layers (to be implemented) ---
-    # def _build_fc_layers(self):
-    #     pass
+    def _build_fc_layers(self):
+        """Builds the fully connected layers based on the config."""
+        layers = []
+        input_dim = self._conv_output_size
+        
+        if not self.fc_units:
+            logger.warning("No fc_units defined. Creating a single linear layer to output 1 unit.")
+            layers.append(nn.Linear(input_dim, 1))
+            return nn.Sequential(*layers)
+            
+        for units in self.fc_units:
+            layers.append(nn.Linear(input_dim, units))
+            if self.use_batch_norm:
+                # Use BatchNorm1d for FC layers, assuming input is (N, C) where C is features
+                layers.append(nn.BatchNorm1d(units))
+            layers.append(self.activation_fn) 
+            layers.append(nn.Dropout(self.dropout_rate))
+            input_dim = units # Next layer's input is current layer's output
+            
+        # Add the final layer to output 1 unit (for regression)
+        layers.append(nn.Linear(input_dim, 1))
+        
+        # Return the built Sequential module for assignment in __init__
+        return nn.Sequential(*layers)
 
     def init_weights(self):
         """Initializes weights for convolutional and linear layers using Xavier uniform.

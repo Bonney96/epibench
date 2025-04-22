@@ -248,10 +248,17 @@ class HDF5Dataset(Dataset):
              raise RuntimeError(f"HDF5 file handle is not open for {self.h5_path}")
 
         try:
-            # Load data for the given index
-            # Convert to PyTorch tensors
-            features = torch.from_numpy(self._file_handle['features'][idx].astype(np.float32))
-            target = torch.from_numpy(self._file_handle['targets'][idx].astype(np.float32))
+            features = self._file_handle['features'][idx]
+            target = self._file_handle['targets'][idx]
+
+            # Convert numpy arrays to PyTorch tensors if they are not already
+            # Use float32 for features, and determine target type appropriately
+            # (often float32 for regression, long for classification)
+            if not isinstance(features, torch.Tensor):
+                features = torch.from_numpy(np.array(features, dtype=np.float32))
+            if not isinstance(target, torch.Tensor):
+                 # Assuming regression target, adjust if classification
+                target = torch.from_numpy(np.array(target, dtype=np.float32))
 
             # Apply transforms if they exist
             if self.transform:
@@ -262,13 +269,11 @@ class HDF5Dataset(Dataset):
             return features, target
 
         except IndexError:
-            logger.error(f"Index {idx} out of bounds for dataset with length {self._length} in file {self.h5_path}")
-            raise
+             logger.error(f"Index {idx} out of bounds for dataset size {self._length} in {self.h5_path}.")
+             raise
         except Exception as e:
-            logger.error(f"Error reading sample {idx} from {self.h5_path}: {e}", exc_info=True)
-            # You might want to return dummy data or raise a specific error
-            # For now, re-raising the exception
-            raise RuntimeError(f"Failed to retrieve sample {idx} from {self.h5_path}") from e
+            logger.error(f"Error loading item {idx} from {self.h5_path}: {e}", exc_info=True)
+            raise # Reraise the exception after logging
 
     def close(self):
         """Closes the HDF5 file handle if it's open."""

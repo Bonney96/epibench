@@ -90,8 +90,7 @@ def main(args):
     # --- Load Data ---
     logger.info("Loading data...")
     try:
-        # Assuming create_dataloaders takes config and returns train/val loaders
-        train_loader, val_loader = create_dataloaders(config)
+        train_loader, val_loader, test_loader = create_dataloaders(config)
         logger.info("Data loaded successfully.")
     except Exception as e:
         logger.error(f"Error loading data: {e}", exc_info=True)
@@ -187,30 +186,55 @@ def main(args):
             model = ModelClass(**model_params).to(device)
             logger.info(f"Model {model_name} created successfully.")
 
-            # 2. Create Trainer
+            # 2. Create Optimizer and Criterion
+            logger.info("Creating optimizer and criterion...")
+            optimizer_name = config['training']['optimizer']
+            optimizer_params = config['training'].get('optimizer_params', {})
+            loss_name = config['training']['loss_function']
+            # Add more robust error handling for missing keys if needed
+
+            # Get optimizer class
+            OptimizerClass = getattr(optim, optimizer_name, None)
+            if OptimizerClass is None:
+                raise ValueError(f"Unknown optimizer name: {optimizer_name}")
+            optimizer = OptimizerClass(model.parameters(), **optimizer_params)
+            logger.info(f"Optimizer '{optimizer_name}' created with params: {optimizer_params}")
+
+            # Get loss function class
+            CriterionClass = getattr(torch.nn, loss_name, None)
+            if CriterionClass is None:
+                raise ValueError(f"Unknown loss function name: {loss_name}")
+            criterion = CriterionClass()
+            logger.info(f"Criterion '{loss_name}' created.")
+
+            # 3. Create Trainer
             logger.info("Initializing Trainer...")
             trainer = Trainer(
                 model=model,
+                optimizer=optimizer,
+                criterion=criterion,
+                train_loader=train_loader,
+                val_loader=val_loader,
                 config=config, # Pass the main config
                 device=device
                 # No 'trial' object needed for standard training
             )
             logger.info("Trainer initialized.")
 
-            # 3. Call trainer.train()
+            # 4. Call trainer.train()
             logger.info("Starting training loop...")
             # Assuming trainer.train handles epochs, steps, logging, etc., based on config
-            history = trainer.train(train_loader, val_loader)
+            history = trainer.train() # Removed train_loader and val_loader arguments
             logger.info("Training loop finished.")
             logger.info(f"Training history: {history}") # Log metrics history
 
-            # 4. Evaluate final model (optional step, can be part of trainer.train)
+            # 5. Evaluate final model (optional step, can be part of trainer.train)
             logger.info("Evaluating final model...")
             # final_metrics = trainer.evaluate(val_loader)
             # logger.info(f"Final validation metrics: {final_metrics}")
             # Placeholder - evaluation might be integrated into the train loop
 
-            # 5. Save model/results (optional step)
+            # 6. Save model/results (optional step)
             logger.info("Saving model and results...")
             # trainer.save_model(output_dir=config.get('output_dir', 'results'))
             # trainer.save_results(output_dir=config.get('output_dir', 'results'))

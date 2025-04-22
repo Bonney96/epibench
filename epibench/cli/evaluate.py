@@ -76,6 +76,33 @@ def setup_evaluate_parser(parser: argparse.ArgumentParser):
 
 def evaluate_main(args):
     """Main function for the evaluate command."""
+    
+    # --- Helper function for JSON serialization ---
+    def convert_numpy_to_json_serializable(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                            np.int16, np.int32, np.int64, np.uint8,
+                            np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        elif isinstance(obj, (np.float_, np.float16, np.float32, 
+                            np.float64)):
+            # Convert NaN to None for JSON compatibility
+            return None if np.isnan(obj) else float(obj)
+        elif isinstance(obj, (np.bool_)):
+            return bool(obj)
+        elif isinstance(obj, (np.void)): # Handle structured array scalars if they appear
+            return None 
+        elif isinstance(obj, dict):
+            # Recursively process dictionary values
+            return {k: convert_numpy_to_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            # Recursively process list items
+            return [convert_numpy_to_json_serializable(item) for item in obj]
+        else:
+            # Return unchanged if not a numpy type or container we handle
+            return obj
+
     # --- Load Config (Subtask 10.2 - Already partially done) ---
     config_manager = None
     config = {}
@@ -157,23 +184,28 @@ def evaluate_main(args):
             raise ValueError("Test data path ('data.test_path') not specified in arguments or configuration.")
         
         # Determine batch size (CLI arg overrides config)
-        batch_size = args.batch_size or config.get('data', {}).get('batch_size', 32) 
-        
-        # Update config for data loader if batch size was overridden
-        # Create a mutable copy to avoid changing the original config dict
-        data_config = config.get('data', {}).copy()
-        data_config['batch_size'] = batch_size
-        data_config['test_path'] = test_data_path # Ensure the correct path is used
-        data_config['shuffle_test'] = False # Typically don't shuffle test data
-        
+        batch_size = args.batch_size or config.get('data', {}).get('batch_size', 32)
+
+        # Ensure the 'data' section exists in the config
+        if 'data' not in config:
+            config['data'] = {}
+
+        # Update the main config dictionary with overrides for the data loader
+        config['data']['batch_size'] = batch_size
+        config['data']['test_path'] = test_data_path # Ensure the correct path is used
+        config['data']['shuffle_test'] = False # Typically don't shuffle test data for evaluation
+
         logger.info(f"Loading test data from: {test_data_path} with batch size: {batch_size}")
-        # Use create_dataloaders, assuming it can handle a 'test' split
-        # Modify create_dataloaders if needed, or create a specific load_test_data function
-        _, _, test_loader = create_dataloaders(data_config, splits=['test']) 
-        
+        # Pass the full config dictionary to create_dataloaders
+        train_loader, val_loader, test_loader = create_dataloaders(config) # Unpack all three
+
+        # Optional: Log if train/val loaders are unexpectedly created/returned
+        if train_loader or val_loader:
+            logger.debug("create_dataloaders returned train/validation loaders during evaluation, they will be ignored.")
+
         if test_loader is None:
              raise RuntimeError("create_dataloaders did not return a test loader.")
-             
+
         logger.info("Test data loaded successfully.")
 
     except FileNotFoundError:
@@ -226,31 +258,45 @@ def evaluate_main(args):
     # --- Calculate Metrics (Subtask 10.4) ---
     logger.info("Calculating metrics...")
     metrics = calculate_regression_metrics(all_y_true, all_y_pred)
+    serializable_metrics = None # Initialize
     if metrics:
-        # Format metrics for logging nicely
-        metrics_log_str = json.dumps(metrics, indent=2)
-        logger.info(f"Calculated Metrics:\n{metrics_log_str}")
+        # Convert numpy types for JSON serialization BEFORE logging/saving
+        try:
+            # Use a copy in case the original metrics dict is needed elsewhere with numpy types
+            serializable_metrics = convert_numpy_to_json_serializable(metrics.copy()) 
+            
+            # Format metrics for logging nicely using the converted dict
+            metrics_log_str = json.dumps(serializable_metrics, indent=2)
+            logger.info(f"Calculated Metrics:\n{metrics_log_str}")
+        except Exception as e:
+             logger.error(f"Failed to convert metrics for JSON serialization: {e}", exc_info=True)
+             serializable_metrics = None # Ensure it's None if conversion fails
+             logger.error("Skipping results saving and plotting due to conversion error.")
+             
     else:
         logger.error("Failed to calculate metrics. Skipping results saving and plotting.")
         # Optionally exit, or just proceed without results
         # sys.exit(1) 
 
     # --- Save Results (Subtask 10.5) ---
-    if metrics: # Only save if metrics were calculated successfully
+    # Use the serializable_metrics if conversion was successful
+    if serializable_metrics: 
         metrics_path = os.path.join(args.output_dir, "evaluation_metrics.json")
         try:
             with open(metrics_path, 'w') as f:
-                json.dump(metrics, f, indent=4)
+                json.dump(serializable_metrics, f, indent=4) # Save the converted dict
             logger.info(f"Metrics saved to: {metrics_path}")
         except Exception as e:
             logger.error(f"Failed to save metrics to {metrics_path}: {e}", exc_info=True)
 
     # --- Generate Plots (Subtask 10.5) ---
-    if not args.no_plots and metrics: # Only plot if metrics exist and plots are enabled
+    # Check serializable_metrics existence for consistency, as plotting uses original arrays anyway
+    if not args.no_plots and serializable_metrics is not None: 
         logger.info("Generating plots...")
         plot_pred_path = os.path.join(args.output_dir, "predictions_vs_actual.png")
         plot_resid_path = os.path.join(args.output_dir, "residuals.png")
         
+        # Plotting functions should still use the original numpy arrays
         try:
             plot_predictions_vs_actual(all_y_true, all_y_pred, save_path=plot_pred_path)
         except Exception as e:
@@ -263,8 +309,8 @@ def evaluate_main(args):
             
     elif args.no_plots:
         logger.info("Plot generation disabled by --no-plots flag.")
-    elif not metrics:
-        logger.warning("Skipping plot generation because metric calculation failed.")
+    elif serializable_metrics is None: # Check if metrics calculation or conversion failed
+        logger.warning("Skipping plot generation because metric calculation or conversion failed.")
 
     logger.info("EpiBench evaluation finished.")
 

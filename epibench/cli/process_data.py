@@ -15,11 +15,35 @@ import random # For shuffling chromosomes
 import logging # Import logging module
 
 # Import helper functions and config loading
-from epibench.config.config_manager import ConfigManager # Import the class
+# from epibench.config.config_manager import ConfigManager # No longer using ConfigManager here
 from epibench.utils.logging import LoggerManager # Import the LoggerManager class
+from epibench.validation.config_validator import validate_process_config, ProcessConfig # Import validator
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
+
+def generate_region_boundary_channel(target_length: int, region_start_in_window: int, region_end_in_window: int, dtype=np.float32) -> np.ndarray:
+    """Generates a binary channel marking the original BED region boundaries within the target window.
+
+    Args:
+        target_length (int): The fixed length of the output sequence window.
+        region_start_in_window (int): The start index of the original BED region relative to the window start (0-based).
+        region_end_in_window (int): The end index (exclusive) of the original BED region relative to the window start.
+        dtype: The numpy dtype for the output array.
+
+    Returns:
+        A numpy array of shape (target_length,) with 1s marking the region and 0s elsewhere.
+    """
+    boundary_channel = np.zeros(target_length, dtype=dtype)
+    
+    # Clamp start and end to be within the window bounds [0, target_length)
+    start_clamped = max(0, region_start_in_window)
+    end_clamped = min(target_length, region_end_in_window)
+    
+    if start_clamped < end_clamped: # Ensure start is less than end after clamping
+        boundary_channel[start_clamped:end_clamped] = 1
+        
+    return boundary_channel
 
 def load_bed_regions(bed_path: str, methyl_col_idx: int = 5) -> Iterator[Tuple[str, int, int, float]]:
     """Loads regions and methylation values from a BED file.
@@ -144,41 +168,46 @@ def setup_process_data_parser(parser):
 
 def process_data_main(args):
     """Main function for the process-data command."""
-    config_manager = None # Initialize to None
-    config = {}
-    try:
-        # Try to load config first to get logging settings
-        config_manager = ConfigManager(args.config) # Instantiate the manager
-        config = config_manager.config # Get the loaded config dictionary
+    # Setup basic logger first to catch early errors
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__) # Re-assign logger after basic setup
 
-        log_settings = config.get('logging', {})
-        log_level_str = log_settings.get('level', 'INFO').upper()
+    validated_config: Optional[ProcessConfig] = None
+    try:
+        # Validate the configuration file using the Pydantic model
+        logger.info(f"Validating configuration file: {args.config}")
+        validated_config = validate_process_config(args.config)
+        logger.info("Configuration validated successfully.")
+        
+        # Now setup logger properly using validated config
+        log_settings = validated_config.logging_config
+        log_level_str = log_settings.level
         log_level = getattr(logging, log_level_str, logging.INFO)
-        log_file = log_settings.get('file') # Can be None
+        log_file = log_settings.file # Can be None
         
-        # Setup logger based on config
         # Use the LoggerManager class to setup
-        LoggerManager.setup_logger(config_manager=config_manager, 
-                                   default_log_level=log_level, 
-                                   default_log_file=log_file)
+        # Note: LoggerManager might need adjustment if it expected the old config format
+        # For now, we pass None for config_manager and use validated values
+        LoggerManager.setup_logger(config_manager=None, # Pass None or adjust LoggerManager
+                                   log_level_override=log_level, 
+                                   log_file_override=log_file,
+                                   log_to_console=True) # Assume console logging is desired
         
+        # Re-log initial messages with the proper formatter
         logger.info("Starting data processing...")
         logger.info(f"Configuration file path: {args.config}")
         logger.info(f"Output directory: {args.output_dir}")
-        logger.info("Configuration loaded successfully.")
-        # Optionally log the config itself at DEBUG level
-        # import pprint; logger.debug(f"Loaded configuration:\n{pprint.pformat(config)}")
+        logger.debug(f"Validated configuration:\n{validated_config.json(indent=2)}")
 
     except FileNotFoundError as e:
-        # If config load fails before logger setup, print to stderr
-        print(f"Error: Configuration file not found: {e}", file=sys.stderr)
+        logger.error(f"Error: Configuration file not found: {e}", exc_info=True)
         sys.exit(1)
-    except (ValueError, yaml.YAMLError, json.JSONDecodeError) as e:
-        print(f"Error loading or parsing configuration file {args.config} before logging setup: {e}", file=sys.stderr)
+    except (ValueError, yaml.YAMLError, json.JSONDecodeError, KeyError) as e:
+        # Catch validation errors (KeyError, ValueError from Pydantic) and parsing errors
+        logger.error(f"Error loading or validating configuration file {args.config}: {e}", exc_info=True)
         sys.exit(1)
     except Exception as e:
-        # Catch any other errors during initial config load/logger setup
-        print(f"An unexpected error occurred during initial setup: {e}", file=sys.stderr)
+        logger.error(f"An unexpected error occurred during initial setup: {e}", exc_info=True)
         sys.exit(1)
 
     # --- Actual Processing Logic --- 
@@ -192,31 +221,33 @@ def process_data_main(args):
     h5_handles = {}
 
     try:
-        # 2. Extract parameters from config
-        ref_genome_path = config.get('reference_genome')
-        methylation_bed_path = config.get('methylation_bed')
-        histone_bw_paths = config.get('histone_bigwigs', []) # List of histone mark BigWig paths
+        # 2. Extract parameters from validated Pydantic config object
+        ref_genome_path = validated_config.input_paths.reference_genome
+        methylation_bed_path = validated_config.input_paths.methylation_bed
+        histone_bw_paths = validated_config.input_paths.histone_bigwigs
         
         # --- New Parameters for Region-Based Processing ---
-        target_seq_length = config.get('target_sequence_length', 1000) # Fixed length for model input
-        methyl_col_idx = config.get('methylation_bed_column', 5) # 0-based index (6th column default)
+        target_seq_length = validated_config.processing_params.target_sequence_length
+        methyl_col_idx = validated_config.processing_params.methylation_bed_column
         num_histone_features = len(histone_bw_paths)
-        output_feature_dim = 4 + num_histone_features # 4 for DNA sequence
+        output_feature_dim = 4 + num_histone_features + 1 # 4: DNA, N: Histones, 1: Region Boundary
 
         # --- Splitting Parameters ---
-        split_config = config.get('split_ratios', {})
-        train_ratio = split_config.get('train', 0.7)
-        val_ratio = split_config.get('validation', 0.15)
+        split_config = validated_config.split_ratios
+        train_ratio = split_config.train
+        val_ratio = split_config.validation
         test_ratio = 1.0 - train_ratio - val_ratio
-        if test_ratio < 0:
-            raise ValueError("Train and validation ratios sum to more than 1.0")
-        random_seed = config.get('random_seed')
+        # Pydantic validator already checks test_ratio >= 0
+        # if test_ratio < 0: # Check already done in Pydantic model
+        #     raise ValueError("Train and validation ratios sum to more than 1.0")
+        random_seed = validated_config.random_seed
 
-        # Validate required config parameters
-        if not ref_genome_path or not methylation_bed_path:
-            raise ValueError("Configuration must include 'reference_genome' and 'methylation_bed' paths.")
+        # Validate required config parameters (Pydantic handles presence, FilePath checks existence)
+        # if not ref_genome_path or not methylation_bed_path: # Already validated by Pydantic
+        #     raise ValueError("Configuration must include 'reference_genome' and 'methylation_bed' paths.")
         if num_histone_features == 0:
              warnings.warn("No 'histone_bigwigs' specified in config. Feature matrix will only contain sequence data.")
+             logger.warning("No 'histone_bigwigs' specified in config. Feature matrix will only contain sequence data.")
         # Output feature dim now depends on number of histone files + 4
 
         # --- Prepare Output Paths --- 
@@ -272,31 +303,64 @@ def process_data_main(args):
 
         # --- Create HDF5 output files (Subtask 24.4) --- 
         logger.info("Creating HDF5 output files...")
-        chunk_shape_feat = (1, target_seq_length, output_feature_dim) # Fixed sequence length
-        chunk_shape_target = (1, 1)
-        chunk_shape_coords = (1, 3) # Store original chr, start, end
+        # Chunk shape reflects the dimensions of a single region's data
+        chunk_shape_feat = (1, target_seq_length, output_feature_dim) # 1 region, seq_len, num_features (4 + histone + boundary)
+        chunk_shape_target = (1, 1) # 1 region, 1 target value
+        # Store original chr (string), start (int), end (int)
+        chunk_shape_coords = (1,) # Chunking by region for coordinates too
         
         for split_name, h5_path in output_paths.items():
             try:
-                 h5_handles[split_name] = h5py.File(h5_path, 'w')
-                 # Create datasets within each file
-                 handle = h5_handles[split_name]
+                 logger.info(f"Initializing HDF5 file for {split_name} split: {h5_path}")
+                 # Open in 'w' mode to create/overwrite
+                 handle = h5py.File(h5_path, 'w') 
+                 h5_handles[split_name] = handle
+                 
+                 # Define chunk shapes (tune based on expected data size and access patterns)
+                 chunk_shape_features = (64, target_seq_length, output_feature_dim) # Chunk across samples
+                 chunk_shape_targets = (64, 1)
+                 chunk_shape_coords = (64,)
+
+                 # Create datasets with maxshape=(None, ...) to allow resizing
+                 logger.info(f"  Creating dataset 'features' with shape (0, {target_seq_length}, {output_feature_dim}) and chunk shape {chunk_shape_features}")
                  handle.create_dataset('features', shape=(0, target_seq_length, output_feature_dim), 
-                                         maxshape=(None, target_seq_length, output_feature_dim),
-                                         dtype=np.float32, chunks=chunk_shape_feat, compression='gzip')
+                                        maxshape=(None, target_seq_length, output_feature_dim), 
+                                        dtype=np.float32, 
+                                        chunks=chunk_shape_features, compression='gzip')
+                 logger.info(f"  Creating dataset 'targets' with shape (0, 1) and chunk shape {chunk_shape_targets}")
                  handle.create_dataset('targets', shape=(0, 1), maxshape=(None, 1), 
-                                       dtype=np.float32, chunks=chunk_shape_target, compression='gzip')
-                 # Store original BED coordinates as metadata
-                 handle.create_dataset('coordinates', shape=(0, 3), maxshape=(None, 3), 
-                                      dtype=h5py.string_dtype(encoding='utf-8'), # Store chr as string
-                                      chunks=chunk_shape_coords, compression='gzip') 
+                                        dtype=np.float32, 
+                                        chunks=chunk_shape_targets, compression='gzip')
+                 logger.info(f"  Creating dataset 'chrom' with shape (0,) and chunk shape {chunk_shape_coords}") # Storing coords separately
+                 handle.create_dataset('chrom', shape=(0,), maxshape=(None,), 
+                                        dtype=h5py.string_dtype(encoding='utf-8'), 
+                                        chunks=chunk_shape_coords, compression='gzip')
+                 logger.info(f"  Creating dataset 'start' with shape (0,) and chunk shape {chunk_shape_coords}")
+                 handle.create_dataset('start', shape=(0,), maxshape=(None,), 
+                                        dtype=np.int64, 
+                                        chunks=chunk_shape_coords, compression='gzip')
+                 logger.info(f"  Creating dataset 'end' with shape (0,) and chunk shape {chunk_shape_coords}")
+                 handle.create_dataset('end', shape=(0,), maxshape=(None,), 
+                                        dtype=np.int64, 
+                                        chunks=chunk_shape_coords, compression='gzip') 
                                       
-                 # Add metadata (optional)
-                 handle.attrs['reference_genome'] = ref_genome_path
-                 handle.attrs['methylation_bed'] = methylation_bed_path
-                 handle.attrs['histone_bigwigs'] = json.dumps(histone_bw_paths) # Store list as JSON string
-                 handle.attrs['target_sequence_length'] = target_seq_length
-                 handle.attrs['epibench_version'] = config.get('_package_version', 'unknown') # Pass version from main
+                 # Add metadata (optional) - Accessing validated config fields
+                 handle.attrs['reference_genome'] = str(validated_config.input_paths.reference_genome)
+                 handle.attrs['methylation_bed'] = str(validated_config.input_paths.methylation_bed)
+                 # Convert Path objects to strings for JSON serialization
+                 handle.attrs['histone_bigwigs'] = json.dumps([str(p) for p in validated_config.input_paths.histone_bigwigs]) 
+                 handle.attrs['target_sequence_length'] = validated_config.processing_params.target_sequence_length
+                 handle.attrs['methylation_bed_column'] = validated_config.processing_params.methylation_bed_column
+                 handle.attrs['random_seed'] = validated_config.random_seed if validated_config.random_seed is not None else 'None'
+                 # Placeholder for version - How to get this now?
+                 # Option 1: Use importlib.metadata
+                 try:
+                     import importlib.metadata
+                     version = importlib.metadata.version('epibench') # Replace 'epibench' with your actual package name
+                 except importlib.metadata.PackageNotFoundError:
+                     version = 'unknown'
+                 handle.attrs['epibench_version'] = version 
+                 handle.attrs['feature_channels'] = f"4 (Sequence) + {num_histone_features} (Histones) + 1 (Region Boundary)"
 
                  logger.info(f"Created HDF5 file for {split_name} split: {h5_path}")
             except Exception as e:
@@ -305,139 +369,201 @@ def process_data_main(args):
                  for h in h5_handles.values(): h.close()
                  raise
 
-        # --- Process Each Region (Subtask 24.2) --- 
-        logger.info("Processing regions and writing to HDF5 files...")
-        split_counts = {'train': 0, 'validation': 0, 'test': 0}
-        
-        # Iterate through shuffled indices and process regions
-        for split_name, indices_list in split_indices.items():
-             logger.info(f"Processing {len(indices_list)} regions for {split_name} split...")
-             h5_handle = h5_handles[split_name]
-             # Use tqdm for progress within each split
-             for idx in tqdm(indices_list, desc=f"Processing {split_name}", leave=False): 
-                 chrom, bed_start, bed_end, target_methylation = all_regions[idx]
-                 
-                 # --- Center region and determine fetch coordinates --- 
-                 center = bed_start + (bed_end - bed_start) // 2
-                 fetch_start = center - target_seq_length // 2
-                 fetch_end = fetch_start + target_seq_length
-                 
-                 # --- Handle chromosome boundary edge cases --- 
-                 chrom_len = len(fasta_handle[chrom])
-                 if fetch_start < 0:
-                     logger.debug(f"Adjusting fetch_start ({fetch_start}) to 0 for region {chrom}:{bed_start}-{bed_end}")
-                     fetch_start = 0
-                     fetch_end = target_seq_length # Ensure fixed length
-                 if fetch_end > chrom_len:
-                      logger.debug(f"Adjusting fetch_end ({fetch_end}) to {chrom_len} for region {chrom}:{bed_start}-{bed_end}")
-                      fetch_end = chrom_len
-                      fetch_start = max(0, fetch_end - target_seq_length) # Ensure fixed length
-                 
-                 # Fetch sequence
-                 sequence = fasta_handle[chrom][fetch_start:fetch_end].seq
-                 actual_len = len(sequence)
-                 
-                 # One-hot encode sequence - Pad if needed
-                 seq_encoded = one_hot_encode(sequence) # (ActualLen, 4)
-                 if actual_len < target_seq_length:
-                     padding_needed = target_seq_length - actual_len
-                     # Pad at the end (or beginning, decide strategy)
-                     pad_array = np.zeros((padding_needed, 4), dtype=np.float32)
-                     seq_encoded = np.concatenate([seq_encoded, pad_array], axis=0)
-                     logger.debug(f"Padded sequence for region {chrom}:{bed_start}-{bed_end} by {padding_needed} bases.")
-                 elif actual_len > target_seq_length:
-                      # This shouldn't happen with correct fetch logic, but as safeguard:
-                      logger.warning(f"Fetched sequence longer ({actual_len}) than target ({target_seq_length}) for {chrom}:{bed_start}-{bed_end}. Truncating.")
-                      seq_encoded = seq_encoded[:target_seq_length, :]
-                 
-                 # Fetch histone signals
-                 histone_signals = np.zeros((target_seq_length, num_histone_features), dtype=np.float32)
-                 for i, bw_handle in enumerate(histone_handles):
-                     try:
-                         # Get values, fill NaNs with 0
-                         vals = bw_handle.values(chrom, fetch_start, fetch_end, numpy=True) 
-                         vals = np.nan_to_num(vals) # Replace NaN with 0
-                         actual_signal_len = len(vals)
+        # Iterate through splits and their corresponding region indices
+        for split_name, indices_for_split in split_indices.items():
+            logger.info(f"Processing {len(indices_for_split)} regions for {split_name} split...")
+            h5_handle = h5_handles[split_name]
+            
+            # Use tqdm for progress bar
+            for region_idx in tqdm(indices_for_split, desc=f"Processing {split_name}", unit="region"):
+                chrom, bed_start, bed_end, target_methylation = all_regions[region_idx]
+                
+                # --- Calculate Fetch Coordinates (Subtask 26.1) ---
+                center = bed_start + (bed_end - bed_start) // 2
+                fetch_start = center - target_seq_length // 2
+                fetch_end = fetch_start + target_seq_length
+                
+                # Ensure coordinates are non-negative
+                if fetch_start < 0:
+                    # Adjust fetch_end proportionally if start is pushed to 0
+                    fetch_end -= fetch_start # fetch_end = fetch_end + abs(fetch_start)
+                    fetch_start = 0
+                    logger.debug(f"Adjusted fetch start to 0 for region center {center} on {chrom}. New window: {fetch_start}-{fetch_end}")
+                    
+                # Check against chromosome length (handle requires pyfaidx handle)
+                try:
+                    chrom_len = len(fasta_handle[chrom])
+                    if fetch_end > chrom_len:
+                        # Adjust fetch_start proportionally if end hits boundary
+                        fetch_start -= (fetch_end - chrom_len)
+                        fetch_end = chrom_len
+                        # Re-check non-negativity after adjustment
+                        if fetch_start < 0: fetch_start = 0 
+                        logger.debug(f"Adjusted fetch end to {chrom_len} for region center {center} on {chrom}. New window: {fetch_start}-{fetch_end}")
+                        # If the window size is still not target_seq_length after adjustment, it needs padding
+                        if (fetch_end - fetch_start) < target_seq_length and fetch_start == 0:
+                             pass # Padding will handle this
+                        elif (fetch_end - fetch_start) < target_seq_length:
+                             logger.warning(f"Could not maintain target sequence length {target_seq_length} at end of chromosome {chrom} for region {bed_start}-{bed_end}. Effective length: {fetch_end-fetch_start}")
+                             # Padding will handle this
+                             
+                except KeyError:
+                    logger.warning(f"Chromosome {chrom} not found in reference genome {ref_genome_path}. Skipping region {chrom}:{bed_start}-{bed_end}.")
+                    continue # Skip this region
+                except Exception as e:
+                     logger.error(f"Error getting chromosome length for {chrom}: {e}. Skipping region {chrom}:{bed_start}-{bed_end}.", exc_info=True)
+                     continue # Skip this region
 
-                         if actual_signal_len == target_seq_length:
-                              histone_signals[:, i] = vals
-                         elif actual_signal_len < target_seq_length:
-                              # Pad histone signal similar to sequence
-                              padding_needed = target_seq_length - actual_signal_len
-                              histone_signals[:actual_signal_len, i] = vals
-                              # Remainder is already zeros
-                              logger.debug(f"Padded histone {i+1} for region {chrom}:{bed_start}-{bed_end} by {padding_needed}.")
-                         else: # actual_signal_len > target_seq_length (unlikely)
-                              logger.warning(f"Fetched histone signal {i+1} longer ({actual_signal_len}) than target ({target_seq_length}) for {chrom}:{bed_start}-{bed_end}. Truncating.")
-                              histone_signals[:, i] = vals[:target_seq_length]
-                              
-                     except Exception as e:
-                          warnings.warn(f"Error fetching signal for histone {i+1} in region {chrom}:{bed_start}-{bed_end} (coords {fetch_start}-{fetch_end}): {e}. Skipping this mark for this region.")
-                 
-                 # Combine features: (TargetSeqLength, 4 + NumHistone)
-                 features_matrix = np.concatenate([seq_encoded, histone_signals], axis=1)
-                 
-                 # Target methylation is already available from the BED region
-                 # target_methylation = target_methylation (variable already holds it)
-                 
-                 # Append data to HDF5 datasets for the correct split
-                 current_size = h5_handle['features'].shape[0]
-                 h5_handle['features'].resize((current_size + 1, target_seq_length, output_feature_dim))
-                 h5_handle['targets'].resize((current_size + 1, 1))
-                 h5_handle['coordinates'].resize((current_size + 1, 3))
-     
-                 h5_handle['features'][current_size, :, :] = features_matrix
-                 h5_handle['targets'][current_size, 0] = target_methylation
-                 # Store original BED coordinates as bytes
-                 h5_handle['coordinates'][current_size, :] = [chrom.encode('utf-8'), str(bed_start).encode('utf-8'), str(bed_end).encode('utf-8')]
-                 split_counts[split_name] += 1
+                # If after adjustment the effective window is still smaller than target, log warning
+                effective_fetch_len = fetch_end - fetch_start
+                if effective_fetch_len < target_seq_length:
+                     logger.debug(f"Effective fetch window {effective_fetch_len} for region {chrom}:{bed_start}-{bed_end} is less than target {target_seq_length}. Padding will be applied.")
+                elif effective_fetch_len > target_seq_length:
+                     # This shouldn't happen with the logic above, but catch just in case
+                     logger.warning(f"Effective fetch window {effective_fetch_len} is unexpectedly larger than target {target_seq_length} for region {chrom}:{bed_start}-{bed_end}. Truncating fetch.")
+                     fetch_end = fetch_start + target_seq_length # Truncate
+                
+                # --- Fetch Sequence (Subtask 26.1) ---
+                seq = ''
+                try:
+                    seq = fasta_handle.get_seq(chrom, fetch_start + 1, fetch_end).seq # pyfaidx is 1-based, inclusive
+                    # Handle cases where get_seq returns less than expected due to boundaries
+                    if len(seq) < target_seq_length:
+                        # Need padding - calculate difference and pad with 'N'
+                        padding_needed = target_seq_length - len(seq)
+                        if fetch_start == 0: # Padding needed at the end
+                             seq += 'N' * padding_needed
+                        else: # Padding needed at the beginning (unlikely with current logic)
+                             seq = 'N' * padding_needed + seq
+                        logger.debug(f"Padded sequence for region {chrom}:{bed_start}-{bed_end} by {padding_needed} bases.")
+                        
+                except Exception as e:
+                    logger.warning(f"Error fetching sequence for region {chrom}:{bed_start}-{bed_end} (coords {fetch_start+1}-{fetch_end}): {e}. Skipping region.")
+                    continue # Skip region if sequence fetch fails
+                
+                # One-hot encode sequence: (TargetSeqLength, 4)
+                seq_encoded = one_hot_encode(seq)
+                
+                # --- Fetch Histone Marks (Subtask 26.1) ---
+                # Initialize histone signal matrix: (TargetSeqLength, NumHistoneFeatures)
+                histone_signals = np.zeros((target_seq_length, num_histone_features), dtype=np.float32)
+                # skip_region_histone = False # Removed skip logic for individual histone errors
+                
+                for i, bw_handle in enumerate(histone_handles):
+                    try:
+                        # Get values, fill NaNs with 0
+                        # pyBigWig uses 0-based, half-open intervals [start, end)
+                        vals = bw_handle.values(chrom, fetch_start, fetch_end, numpy=True) 
+                        vals = np.nan_to_num(vals) # Replace NaN with 0
+                        actual_signal_len = len(vals)
 
-        logger.info(f"Finished processing regions.")
-        for split_name, count in split_counts.items():
-             logger.info(f"  {split_name.capitalize()} split: {count} regions written to {output_paths[split_name]}")
+                        if actual_signal_len == target_seq_length:
+                             histone_signals[:, i] = vals
+                        elif actual_signal_len < target_seq_length:
+                             # Pad histone signal similar to sequence
+                             padding_needed = target_seq_length - actual_signal_len
+                             # Determine if padding is needed at start or end based on fetch coords
+                             if fetch_start == 0 and fetch_end < chrom_len:
+                                 # Padding at the end
+                                 histone_signals[:actual_signal_len, i] = vals
+                             elif fetch_end == chrom_len and fetch_start > 0:
+                                 # Padding at the beginning
+                                 histone_signals[padding_needed:, i] = vals
+                             else:
+                                 # Default or ambiguous case, pad at end
+                                 histone_signals[:actual_signal_len, i] = vals
+                             logger.debug(f"Padded histone {i+1} for region {chrom}:{bed_start}-{bed_end} by {padding_needed}.")
+                        else: # actual_signal_len > target_seq_length (can happen if BigWig has different resolution)
+                             logger.warning(f"Fetched histone signal {i+1} longer ({actual_signal_len}) than target ({target_seq_length}) for {chrom}:{bed_start}-{bed_end}. Truncating.")
+                             histone_signals[:, i] = vals[:target_seq_length]
+                             
+                    except Exception as e:
+                         warnings.warn(f"Error fetching signal for histone {i+1} in region {chrom}:{bed_start}-{bed_end} (coords {fetch_start}-{fetch_end}): {e}. Setting channel to zeros.")
+                         # Don't skip the whole region, just leave this channel as zeros if one BigWig fails
+                         histone_signals[:, i] = 0 # Ensure channel is zeroed on error
+                
+                # --- Generate Boundary Channel (Subtask 26.2) ---
+                # Calculate original region's position relative to the fetched window
+                region_start_in_window = bed_start - fetch_start
+                region_end_in_window = bed_end - fetch_start
+                # Create the 11th channel: a binary mask indicating the original BED region extent
+                boundary_channel = generate_region_boundary_channel(
+                    target_length=target_seq_length,
+                    region_start_in_window=region_start_in_window,
+                    region_end_in_window=region_end_in_window
+                ) # Shape: (target_seq_length,)
+                # Reshape to (target_seq_length, 1) for concatenation
+                boundary_channel = boundary_channel.reshape(-1, 1) 
+                # --- End Boundary Channel ---
+                
+                # Combine features: (TargetSeqLength, 4 + NumHistone + 1)
+                features_matrix = np.concatenate([seq_encoded, histone_signals, boundary_channel], axis=1)
+                
+                # Target methylation is already available from the BED region
+                # target_methylation = target_methylation (variable already holds it)
+                
+                # --- Shape Validation (Subtask 26.3) ---
+                expected_shape = (target_seq_length, output_feature_dim)
+                if features_matrix.shape != expected_shape:
+                    logger.error(f"Internal Error: Final feature matrix shape mismatch for region {chrom}:{bed_start}-{bed_end}. Expected {expected_shape}, got {features_matrix.shape}. Skipping region.")
+                    continue # Skip writing this malformed region
+                # --- End Shape Validation ---
+                
+                # Append data to HDF5 datasets for the correct split
+                current_size = h5_handle['features'].shape[0]
+                h5_handle['features'].resize((current_size + 1, target_seq_length, output_feature_dim))
+                h5_handle['targets'].resize((current_size + 1, 1))
+                # Resize coordinate datasets (now storing string, int, int separately)
+                h5_handle['chrom'].resize((current_size + 1,))
+                h5_handle['start'].resize((current_size + 1,))
+                h5_handle['end'].resize((current_size + 1,))
+                
+                # Assign data to the new slots
+                h5_handle['features'][current_size] = features_matrix
+                h5_handle['targets'][current_size] = np.array([[target_methylation]], dtype=np.float32)
+                h5_handle['chrom'][current_size] = chrom
+                h5_handle['start'][current_size] = bed_start
+                h5_handle['end'][current_size] = bed_end
 
-    except (FileNotFoundError, ValueError, KeyError, yaml.YAMLError, json.JSONDecodeError, pd.errors.ParserError, RuntimeError) as e:
-        # Removed pyBigWig.BigWigError. Catching RuntimeError explicitly for pyBigWig open error.
-        # Catching general OSError for HDF5 file issues might be better if needed.
-        logger.error(f"Error during data processing: {e}", exc_info=True) # Log traceback for errors
-        # Ensure files are closed even on error before exiting
-        # Close handles in finally block
-        if fasta_handle:
-            # pyfaidx doesn't have an explicit close method typically
-            pass 
-        if histone_handles:
-            for i, handle in enumerate(histone_handles):
-                 try: handle.close()
-                 except Exception as e: logger.warning(f"Error closing BigWig handle {i}: {e}")
-        if h5_handles: 
-            for split_name, handle in h5_handles.items():
-                 if handle: # Check if handle was successfully created
-                     try: 
-                         handle.close()
-                         logger.info(f"Closed HDF5 file: {output_paths[split_name]}")
-                     except Exception as e: logger.warning(f"Error closing HDF5 file {output_paths[split_name]}: {e}")
-        sys.exit(1)
+        logger.info(f"Finished processing. Total regions processed: {current_size}. Total regions skipped: {current_size - len(split_indices['train']) - len(split_indices['validation']) - len(split_indices['test'])}.")
+        logger.info(f"Processed data saved to HDF5 files in: {args.output_dir}")
+        # Report counts per split
+        for split_name, h5_handle in h5_handles.items():
+            if h5_handle:
+                 count = h5_handle['features'].shape[0]
+                 logger.info(f"  - {split_name}: {count} regions saved to {h5_handle.filename}")
+
     except Exception as e:
-        logger.critical(f"An unexpected critical error occurred during data processing: {e}", exc_info=True)
-        sys.exit(1)
+        logger.error(f"An error occurred during data processing: {e}", exc_info=True)
+        # Ensure files are closed even if errors occur mid-processing
+        sys.exit(1) # Exit with error code
     finally:
-        # Ensure all file handles are closed
+        # 5. Close all file handles
+        logger.info("Closing file handles...")
         if fasta_handle:
-            # pyfaidx doesn't have an explicit close method typically
-            pass 
-        if histone_handles:
-            for i, handle in enumerate(histone_handles):
-                 try: handle.close()
-                 except Exception as e: logger.warning(f"Error closing BigWig handle {i}: {e}")
-        if h5_handles: 
-            for split_name, handle in h5_handles.items():
-                 if handle: # Check if handle was successfully created
-                     try: 
-                         handle.close()
-                         logger.info(f"Closed HDF5 file: {output_paths[split_name]}")
-                     except Exception as e: logger.warning(f"Error closing HDF5 file {output_paths[split_name]}: {e}")
+            try:
+                fasta_handle.close()
+                logger.debug("Closed FASTA file handle.")
+            except Exception as e:
+                 logger.warning(f"Error closing FASTA handle: {e}")
+                 
+        for i, handle in enumerate(histone_handles):
+            if handle:
+                try:
+                    handle.close()
+                    logger.debug(f"Closed histone BigWig handle {i+1}.")
+                except Exception as e:
+                     logger.warning(f"Error closing histone BigWig handle {i+1}: {e}")
+                     
+        for split_name, handle in h5_handles.items():
+            if handle:
+                try:
+                    handle.close()
+                    logger.info(f"Closed HDF5 file handle for {split_name} split.")
+                except Exception as e:
+                     logger.warning(f"Error closing HDF5 handle for {split_name}: {e}")
 
-    logger.info("Region-based data processing complete.")
+    logger.info("Data processing finished.")
 
 if __name__ == '__main__':
     # This allows running the script directly for testing
