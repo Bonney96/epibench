@@ -189,9 +189,8 @@ def process_data_main(args):
         # Note: LoggerManager might need adjustment if it expected the old config format
         # For now, we pass None for config_manager and use validated values
         LoggerManager.setup_logger(config_manager=None, # Pass None or adjust LoggerManager
-                                   log_level_override=log_level, 
-                                   log_file_override=log_file,
-                                   log_to_console=True) # Assume console logging is desired
+                                   default_log_level=log_level, 
+                                   default_log_file=log_file) # Removed log_to_console and used default_* params
         
         # Re-log initial messages with the proper formatter
         logger.info("Starting data processing...")
