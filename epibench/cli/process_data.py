@@ -263,13 +263,21 @@ def process_data_main(args):
              raise # Re-raise to exit
 
         # 3. Initialize file handlers
+        # --- TEMPORARY DEBUGGING: Open BigWigs BEFORE Fasta ---
+        logger.info("DEBUG: Opening histone BigWig files first...")
+        for bw_path in histone_bw_paths:
+            logger.info(f"  - DEBUG: Trying to open {bw_path}")
+            try:
+                histone_handles.append(pyBigWig.open(bw_path))
+            except Exception as e:
+                logger.error(f"DEBUG: Failed to open BigWig {bw_path}: {e}", exc_info=True)
+                # Decide whether to exit or just log? For debugging, let's exit.
+                sys.exit(1)
+        logger.info("DEBUG: Successfully opened all histone BigWig files.")
+        # --- END TEMPORARY DEBUGGING ---
+        
         logger.info(f"Opening reference genome: {ref_genome_path}")
         fasta_handle = pyfaidx.Fasta(ref_genome_path)
-        
-        logger.info("Opening histone BigWig files:")
-        for bw_path in histone_bw_paths:
-            logger.info(f"  - {bw_path}")
-            histone_handles.append(pyBigWig.open(bw_path))
         
         # --- Load and Split BED Regions (Subtask 24.3) ---
         logger.info(f"Loading and splitting BED regions from: {methylation_bed_path}")
