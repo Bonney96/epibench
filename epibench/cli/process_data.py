@@ -196,7 +196,7 @@ def process_data_main(args):
         logger.info("Starting data processing...")
         logger.info(f"Configuration file path: {args.config}")
         logger.info(f"Output directory: {args.output_dir}")
-        logger.debug(f"Validated configuration:\n{validated_config.json(indent=2)}")
+        logger.debug(f"Validated configuration:\n{validated_config.model_dump_json(indent=2)}")
 
     except FileNotFoundError as e:
         logger.error(f"Error: Configuration file not found: {e}", exc_info=True)
