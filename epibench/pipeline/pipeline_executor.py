@@ -8,103 +8,74 @@ import tempfile
 import os
 import sys
 
-# Import the validator
-from epibench.validation.config_validator import validate_process_config, ProcessConfig
-from pydantic import ValidationError
+# --- Remove unused imports ---
+# from epibench.validation.config_validator import validate_process_config, ProcessConfig
+# from pydantic import ValidationError
+# --- Add Import ---
+from epibench.pipeline.results_collector import ResultsCollector
 
 logger = logging.getLogger(__name__) # Get logger instance
 
 class PipelineExecutor:
     """
     Handles the systematic execution of the processing pipeline across multiple samples,
-    including checkpointing and error handling.
+    including checkpointing and error handling. It is initialized with a base output
+    directory and checkpoint file path.
     """
 
-    def __init__(self, config_file: Path, checkpoint_file: Path = Path('pipeline_checkpoint.json')):
+    def __init__(self, base_output_directory: Path, checkpoint_file: Path = Path('pipeline_checkpoint.json')):
         """
         Initializes the PipelineExecutor.
 
         Args:
-            config_file: Path to the main configuration file for the pipeline.
-                         (Needs validation using config_validator from 27.2).
+            base_output_directory: The root directory where all outputs (per-sample subdirs, logs) will be stored.
             checkpoint_file: Path to the file used for saving and loading execution progress.
         """
-        self.config_file = config_file
-        self.checkpoint_file = checkpoint_file
+        self.base_output_directory = Path(base_output_directory) # Ensure it's a Path object
+        self.checkpoint_file = Path(checkpoint_file) # Ensure it's a Path object
         self.checkpoint_data = self._load_checkpoint()
-        self.config: Optional[ProcessConfig] = None # Initialize config attribute
 
-        # Load and validate the main configuration
-        try:
-            logger.info(f"Validating configuration file: {config_file}")
-            self.config = validate_process_config(str(config_file))
-            logger.info("Configuration validated successfully.")
-        except (ValidationError, FileNotFoundError, KeyError, yaml.YAMLError) as e:
-            logger.error(f"Configuration validation failed: {e}")
-            # Decide how to handle validation failure - perhaps raise an exception?
-            # For now, log the error and self.config remains None.
-            # raise ValueError(f"Configuration validation failed: {e}") from e
-            self.config = None # Explicitly set to None on failure
-        except Exception as e:
-            logger.exception(f"An unexpected error occurred during configuration validation: {e}")
-            self.config = None
-
-        if self.config:
-            # --- Logging Setup based on Config ---
-            self._setup_logging()
-            logger.info(f"PipelineExecutor initialized. Config: {config_file}, Checkpoint: {checkpoint_file}")
-        else:
-            # Minimal logging setup if config fails
-            logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
-            logger.error("PipelineExecutor initialization failed due to configuration errors.")
-            # Optionally raise an exception here to prevent running with invalid config
-            # raise RuntimeError("Failed to initialize PipelineExecutor due to configuration errors.")
+        # --- Simplified Logging Setup ---
+        self._setup_logging()
+        logger.info(f"PipelineExecutor initialized. Output Dir: {self.base_output_directory}, Checkpoint: {self.checkpoint_file}")
 
     def _setup_logging(self):
-        """Configures logging based on the loaded ProcessConfig."""
-        if not self.config: # Should not happen if called correctly, but safety check
-             # Use print as logging might not be set up yet
-             print("Error: Cannot setup logging without a valid configuration.")
-             return
+        """Configures logging to console and a file within the base output directory."""
+        # Ensure base output directory exists
+        try:
+            self.base_output_directory.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+             # Use print as logging might not be fully set up yet
+             print(f"Error creating base output directory {self.base_output_directory}: {e}. Logging may be incomplete.", file=sys.stderr)
+             # Continue logging setup, maybe just to console
 
-        log_level_str = self.config.logging_config.level
-        log_file = self.config.logging_config.file
-
-        log_level = getattr(logging, log_level_str.upper(), logging.INFO)
+        log_level = logging.INFO # Set a default level
         log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         formatter = logging.Formatter(log_format)
+        log_file = self.base_output_directory / "pipeline_executor.log"
 
-        # Get the root logger or the specific logger instance
-        # Configuring the root logger is often simpler
-        root_logger = logging.getLogger() 
-        root_logger.setLevel(log_level) 
+        root_logger = logging.getLogger()
+        root_logger.setLevel(log_level)
 
-        # Remove existing handlers to avoid duplicates if re-initialized
+        # Remove existing handlers to avoid duplicates
         for handler in root_logger.handlers[:]:
             root_logger.removeHandler(handler)
 
-        # Add Console Handler
-        console_handler = logging.StreamHandler()
+        # Console Handler
+        console_handler = logging.StreamHandler(sys.stdout) # Explicitly use stdout
         console_handler.setFormatter(formatter)
-        console_handler.setLevel(log_level) # Console logs at the configured level
+        console_handler.setLevel(log_level)
         root_logger.addHandler(console_handler)
 
-        # Add File Handler if specified
-        if log_file:
-            try:
-                # Ensure directory exists if log_file is a path
-                log_path = Path(log_file)
-                log_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                file_handler = logging.FileHandler(log_path, mode='a') # Append mode
-                file_handler.setFormatter(formatter)
-                file_handler.setLevel(log_level) # File logs at the configured level
-                root_logger.addHandler(file_handler)
-                logger.info(f"Logging initialized. Level: {log_level_str}, File: {log_path}")
-            except Exception as e:
-                logger.error(f"Failed to set up file logging to {log_file}: {e}. Logging to console only.")
-        else:
-             logger.info(f"Logging initialized. Level: {log_level_str}, Console only.")
+        # File Handler
+        try:
+            file_handler = logging.FileHandler(log_file, mode='a') # Append mode
+            file_handler.setFormatter(formatter)
+            file_handler.setLevel(log_level)
+            root_logger.addHandler(file_handler)
+            logger.info(f"Logging initialized. Level: INFO, File: {log_file}")
+        except Exception as e:
+            logger.error(f"Failed to set up file logging to {log_file}: {e}. Logging to console only.")
 
     def _load_checkpoint(self) -> Dict[str, Any]:
         """Loads the checkpoint data from the file."""
@@ -141,10 +112,6 @@ class PipelineExecutor:
                             required by run_full_pipeline.py (e.g., 'process_data_config', 'train_config').
                             If None, assumes details are globally defined or not needed per sample.
         """
-        if not self.config:
-             logger.error("Cannot run pipeline: Configuration is invalid or was not loaded.")
-             return
-
         if not sample_details:
              # If details aren't provided, create empty dicts.
              # run_full_pipeline.py might fail if required keys like
@@ -153,7 +120,7 @@ class PipelineExecutor:
              logger.warning("sample_details not provided to run(). Assuming defaults or global configs.")
              sample_details = {sample_id: {} for sample_id in sample_list}
 
-        logger.info(f"Preparing pipeline run for {len(sample_list)} potential samples.")
+        logger.info(f"Preparing pipeline run for {len(sample_list)} potential samples in {self.base_output_directory}.")
 
         # --- Filter Samples Based on Checkpoint --- 
         samples_to_process_this_run = []
@@ -186,6 +153,10 @@ class PipelineExecutor:
 
         if not samples_to_process_this_run:
             logger.info("No samples need processing in this run (all completed or skipped).")
+            # --- Call results collector even if no samples processed in *this* run ---
+            # This ensures a summary is always generated based on the checkpoint state
+            self._collect_results()
+            logger.info("Pipeline execution run finished (no new samples processed).")
             return
 
         logger.info(f"Will process {len(samples_to_process_this_run)} samples in this batch.")
@@ -204,19 +175,18 @@ class PipelineExecutor:
                 os.fsync(tmp_yaml.fileno())
                 tmp_yaml.close() # Close here, subprocess needs to read it
 
-                # Determine the base output directory from the main config
-                # TODO: Update this based on the actual field name in ProcessConfig
-                base_output_dir = self.config.output_directory # Example: Assume 'output_directory' field exists
-                if not base_output_dir:
-                     logger.error("Base output directory not defined in the main configuration.")
-                     return # Cannot proceed without output dir
-                base_output_dir = Path(base_output_dir) # Ensure it's a Path object
+                # --- Use self.base_output_directory ---
+                # base_output_dir = self.config.output_directory
+                # if not base_output_dir:
+                #      logger.error("Base output directory not defined in the main configuration.")
+                #      return # Cannot proceed without output dir
+                base_output_dir = self.base_output_directory # Use the stored path
 
                 command = [
                     sys.executable, # Use the same python interpreter
                     str(Path("scripts/run_full_pipeline.py")), # Ensure path is correct
                     '--samples-config', str(temp_yaml_path),
-                    '--output-dir', str(base_output_dir),
+                    '--output-dir', str(base_output_dir), # Pass the correct output dir
                     '--max-workers', '1' # Run sequentially within the script as executor manages batch
                      # Add other necessary global arguments if run_full_pipeline.py supports them
                 ]
@@ -253,9 +223,12 @@ class PipelineExecutor:
 
         # --- Update Checkpoints for the Batch --- 
         final_status = 'completed' if success else 'failed'
-        logger.info(f"Updating checkpoints for {len(pending_or_failed_ids)} processed samples with status: {final_status}")
+        logger.info(f"Updating checkpoints for {len(pending_or_failed_ids)} processed/attempted samples with status: {final_status}")
         for sample_id in pending_or_failed_ids:
-            self.checkpoint_data[sample_id] = {'status': final_status}
+            if sample_id not in self.checkpoint_data:
+                self.checkpoint_data[sample_id] = {}
+            self.checkpoint_data[sample_id]['status'] = final_status
+            # Optionally add a timestamp or error details here
         self._save_checkpoint()
 
         total_processed = len(pending_or_failed_ids)
@@ -263,34 +236,77 @@ class PipelineExecutor:
         logger.info("Pipeline batch run finished.")
         logger.info(f"Summary for this run: Samples Processed={total_processed}, Failed={failed_count}, Skipped Previously={skipped_count}")
 
+        # --- Collect Results After Pipeline Run Attempt ---
+        self._collect_results() # Call helper method
+
+        logger.info("Pipeline execution run finished.")
+
+    def _collect_results(self):
+        """Helper method to instantiate and run the ResultsCollector."""
+        logger.info("Attempting to collect results for all samples...")
+        try:
+            # --- Pass self.base_output_directory to ResultsCollector ---
+            collector = ResultsCollector(self.base_output_directory, self.checkpoint_data)
+            all_results = collector.collect_all() # collect_all likely returns None now or a summary dict
+
+            # --- Adjust saving logic ---
+            # The collector now handles saving reports within its own structure.
+            # We might not need to save pipeline_summary.json here anymore,
+            # or we could save a minimal summary returned by collect_all if needed.
+            # For now, assume collector saves its reports and log completion.
+            if all_results: # If collector returns something, maybe save it
+                summary_path = self.base_output_directory / "pipeline_run_summary.json"
+                with open(summary_path, 'w') as f:
+                    json.dump(all_results, f, indent=4)
+                logger.info(f"Pipeline run summary (from collector) saved to {summary_path}")
+            else:
+                logger.info("Results collection process completed (reports saved by collector).")
+
+        except Exception as e:
+            logger.exception(f"An error occurred during results collection: {e}")
+
 # Example Usage (adjust as needed)
 if __name__ == "__main__":
     # This is placeholder example usage.
     # The calling script/user is responsible for providing the configuration path
     # and determining the list of samples to process.
 
-    # --- Argument Parsing --- 
+    # --- Argument Parsing ---
     import argparse
     parser = argparse.ArgumentParser(description="Run the EpiBench pipeline for multiple samples.")
-    parser.add_argument("-c", "--config", required=True, type=Path, 
-                        help="Path to the main YAML configuration file.")
-    parser.add_argument("-s", "--sample-list", required=True, type=Path, 
+    # --- Change --config to --output-dir ---
+    parser.add_argument("-o", "--output-dir", required=True, type=Path,
+                        help="Path to the base directory for all outputs.")
+    parser.add_argument("-s", "--sample-list", required=True, type=Path,
                         help="Path to a file containing sample IDs (one per line).")
     # TODO: Add argument for sample details/metadata if needed, e.g., a sample sheet path.
     # Sample details should include paths to process/train configs per sample
-    parser.add_argument("--sample-sheet", type=Path, 
+    parser.add_argument("--sample-sheet", type=Path,
                          help="Path to a YAML/CSV file defining details (like config paths) per sample.")
-    parser.add_argument("--checkpoint", type=Path, default=Path("pipeline_checkpoint.json"),
-                        help="Path to the checkpoint file (default: pipeline_checkpoint.json).")
+    parser.add_argument("--checkpoint", type=Path, default=None, # Default to None, construct path later
+                        help="Path to the checkpoint file (default: <output-dir>/pipeline_checkpoint.json).")
 
     args = parser.parse_args()
 
-    # --- Configuration Validation --- 
-    if not args.config.is_file():
-        print(f"Error: Configuration file not found at {args.config}")
+    # --- Validate Output Directory ---
+    try:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"Error creating output directory {args.output_dir}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # --- Sample List Loading --- 
+    # --- Set default checkpoint path if needed ---
+    if args.checkpoint is None:
+        args.checkpoint = args.output_dir / "pipeline_checkpoint.json"
+    else:
+        # Ensure parent dir exists if an explicit path is given
+        try:
+             args.checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+             print(f"Error creating directory for checkpoint file {args.checkpoint}: {e}", file=sys.stderr)
+             sys.exit(1)
+
+    # --- Sample List Loading ---
     if not args.sample_list.is_file():
         print(f"Error: Sample list file not found at {args.sample_list}")
         sys.exit(1)
@@ -313,26 +329,24 @@ if __name__ == "__main__":
     # in run_full_pipeline.py unless defaults are handled there.
     details_for_samples = {sample_id: {} for sample_id in samples_to_process}
     # Example structure needed in details_for_samples[sample_id]:
-    # { 
+    # {
     #    'process_data_config': 'path/to/process_sample1.yaml',
     #    'train_config': 'path/to/train_sample1.yaml',
     #    'input_data_for_prediction': 'path/to/predict_input_sample1.h5' # Optional
     # }
-    # --- Executor Initialization and Run --- 
+    # --- Executor Initialization and Run ---
     try:
-        # Initialize executor (this performs config validation and sets up logging)
-        executor = PipelineExecutor(config_file=args.config, checkpoint_file=args.checkpoint)
-        
-        # Only run if initialization was successful (config is valid)
-        if executor.config:
-            executor.run(sample_list=samples_to_process, sample_details=details_for_samples)
-        else:
-             print("Exiting due to configuration errors during initialization.", file=sys.stderr)
-             sys.exit(1) # Exit if config was invalid
-             
+        # --- Update Executor Instantiation ---
+        executor = PipelineExecutor(base_output_directory=args.output_dir, checkpoint_file=args.checkpoint)
+
+        # --- Remove check for executor.config ---
+        executor.run(sample_list=samples_to_process, sample_details=details_for_samples)
+
     except Exception as e:
          # Catch-all for unexpected errors during execution
-         # Logging should ideally be set up by now if config was valid
+         # Use print initially as logger setup happens in Executor init
+         print(f"An unexpected error occurred: {e}", file=sys.stderr)
+         # Attempt to log if possible
          logging.getLogger(__name__).exception(f"An unexpected error occurred during pipeline execution: {e}")
          sys.exit(1)
 
