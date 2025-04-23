@@ -157,8 +157,17 @@ class Trainer:
 
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch+1}/{self.epochs} Training", leave=False)
 
-        for batch_idx, (features, targets) in enumerate(pbar):
-            features, targets = features.to(self.device), targets.to(self.device)
+        for batch_idx, batch_data in enumerate(pbar):
+            # Handle potential inclusion of coordinates or other metadata
+            if len(batch_data) == 3:
+                features, targets, _ = batch_data  # Unpack coords but ignore them for now
+            elif len(batch_data) == 2:
+                features, targets = batch_data # Assume standard (features, targets)
+            else:
+                raise ValueError(f"Unexpected number of items in batch: {len(batch_data)}. Expected 2 or 3.")
+
+            features = features.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
 
             self.optimizer.zero_grad(set_to_none=True) # More memory efficient
 
