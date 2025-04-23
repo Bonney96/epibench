@@ -26,7 +26,7 @@ model:
   # Parameters specific to the SeqCNNRegressor model.
   params:
     # Number of input channels/tracks (verify this matches data processing output).
-    input_channels: 10
+    input_channels: 11
     # Configuration for the multi-branch CNN.
     # List of filter counts for each convolutional layer in a branch.
     num_filters: 64 # Renamed from cnn_filters and assume a single value is expected per the __init__
