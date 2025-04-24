@@ -1,0 +1,44 @@
+# Example Configuration for epibench process-data
+# This file provides a template for configuring data processing.
+
+# Input File Paths
+reference_genome: path/to/reference/genome.fa
+methylation_bed: path/to/data/methylation.bed
+histone_bigwigs:
+  - path/to/data/H3K27ac.bw
+  - path/to/data/H3K27me3.bw
+  - path/to/data/H3K36me3.bw
+  - path/to/data/H3K4me.bw # Check exact mark name needed
+  - path/to/data/H3K4me3.bw
+  - path/to/data/H3K9me3.bw
+  # Note: Ensure the correct 0-based column index from the BED file is used if needed.
+
+# Output File Path (Commented Out - Handled by CLI)
+# The process-data command requires an --output-dir argument.
+# Processed data (train.h5, validation.h5, test.h5) is saved there.
+# output_hdf5: ./processed_data/example_processed/processed_data.h5
+
+# Processing Parameters (Potentially less relevant for region-based)
+window_size: 10000 # Size of the genomic window if window-based approach is used.
+step_size: 10000   # Step between windows (10000 = non-overlapping).
+
+# Parameters for Region-Based Processing (Current Approach)
+target_sequence_length: 10000 # Fixed length for sequence/histone features around BED region center.
+# Optional: 0-based index of methylation value column in BED file (default is 5, the 6th column).
+# methylation_bed_column: 5
+
+# Data Splitting Parameters (Used for random region split)
+split_ratios:
+  train: 0.7       # Proportion for training set.
+  validation: 0.15 # Proportion for validation set.
+  # Test set proportion is implicit (1.0 - train - validation).
+
+# Optional: Random seed for reproducible region shuffling during split.
+random_seed: 42
+
+# Logging Configuration
+logging:
+  # Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+  level: INFO # Default: INFO
+  # Optional: Path to save log file (relative to output dir).
+  # file: processing_log.log 
