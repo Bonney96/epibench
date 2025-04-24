@@ -3,23 +3,25 @@
 # Path to the training configuration file used for the model checkpoint.
 # This is CRITICAL for reconstructing the correct model architecture.
 # It should point to the config saved *within* the training output directory.
-training_config: ./training_results/AML_263578_SeqCNNRegressor/train_config.yaml
+training_config: config/train_config_aml_263578.yaml
 
 # Interpretation method parameters
 interpretation:
+  method: IntegratedGradients
   integrated_gradients:
     n_steps: 50              # Number of steps for approximation
-    method: "gausslegendre"  # Integration method
-    internal_batch_size: 64  # Batch size during interpretation passes
     # baseline: "zero"         # Baseline input type ('zero', 'random', 'gaussian', or path to custom baseline HDF5)
     # random_seed: 42          # Seed for random/gaussian baselines
+    internal_batch_size: 64  # Batch size during interpretation passes
 
 # Feature extraction parameters (applied to attribution maps)
-feature_extraction:
-  method: "top_k"            # Method ('top_k', 'threshold')
-  top_k: 100                 # Number of top features to extract per sample
-  # threshold: 0.1           # Threshold for feature extraction (used if method is 'threshold')
-  # absolute_value: true     # Use absolute attribution values for ranking/thresholding
+# feature_extraction:
+#   method: "top_k"            # Method ('top_k', 'threshold')
+#   top_k: 100                 # Number of top features to extract per sample
+#   # threshold: 0.1           # Threshold for feature extraction (used if method is 'threshold')
+#   # absolute_value: true     # Use absolute attribution values for ranking/thresholding
+# Defaulting to Pydantic model defaults for feature_extraction
+feature_extraction: {} # Use defaults: use_absolute_value=True, top_k=None, threshold=None
 
 # Output configuration
 output:
