@@ -68,10 +68,6 @@ def save_interpretation_results(output_dir: Union[str, Path],
 
         # Convert coordinates to NumPy arrays
         num_samples = len(coordinates)
-        if num_samples != attributions.shape[0]:
-            logger.error(f"Coordinate count ({num_samples}) does not match attribution sample count ({attributions.shape[0]}). Aborting save.")
-            raise ValueError("Mismatch between coordinates and attributions count.")
-            
         # Handle potential None values in coordinates list
         # Provide default values if coordinate dict is None
         default_chrom = ""
