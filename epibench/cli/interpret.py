@@ -29,6 +29,25 @@ from epibench.interpretation.io import save_interpretation_results, extract_and_
 
 logger = logging.getLogger(__name__)
 
+# --- Custom Collate Function ---
+def interpret_collate_fn(batch):
+    """Custom collate function for interpretation DataLoader.
+
+    Handles batches where coordinates might be None or dicts.
+    """
+    # batch is a list of tuples: [(features1, target1, coords1), (features2, target2, coords2), ...]
+    features_list = [item[0] for item in batch]
+    targets_list = [item[1] for item in batch]
+    coords_list = [item[2] for item in batch] # Collect coords (should be list of dicts or Nones)
+
+    # Use default_collate for features and targets (assumes they are tensors)
+    features_collated = torch.utils.data.default_collate(features_list)
+    targets_collated = torch.utils.data.default_collate(targets_list)
+
+    # Return the collated tensors and the raw list of coordinates
+    return features_collated, targets_collated, coords_list
+# --- End Custom Collate Function ---
+
 def setup_interpret_parser(parser: argparse.ArgumentParser):
     """Adds arguments specific to the interpret command."""
     parser.add_argument(
@@ -218,7 +237,8 @@ def interpret_main(args):
             batch_size=batch_size,
             shuffle=False, # Never shuffle interpretation data
             num_workers=num_workers, 
-            pin_memory=True if device == torch.device('cuda') else False # Explicit check for cuda device
+            pin_memory=True if device == torch.device('cuda') else False, # Explicit check for cuda device
+            collate_fn=interpret_collate_fn # USE CUSTOM COLLATE FN
         )
 
         logger.info("Interpretation input data loaded successfully.")
