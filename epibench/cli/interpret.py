@@ -89,10 +89,13 @@ def interpret_main(args):
 
     # --- Setup Logging (using config) ---
     LoggerManager.setup_logger(
-        log_level_override=config.logging_config.level,
-        log_file_override=config.logging_config.file,
-        log_to_console=True # Assuming console logging is always desired
+        config_manager=None,
+        default_log_level=getattr(logging, config.logging_config.level, logging.INFO),
+        default_log_file=config.logging_config.file,
+        force_reconfigure=True
     )
+    logger = logging.getLogger(__name__)
+    
     logger.info("Starting EpiBench model interpretation...")
     logger.info(f"Interpretation arguments: {args}")
     logger.info(f"Loaded configuration from: {args.config}")
