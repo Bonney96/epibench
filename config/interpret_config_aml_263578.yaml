@@ -8,11 +8,11 @@ training_config: config/train_config_aml_263578.yaml
 # Interpretation method parameters
 interpretation:
   method: IntegratedGradients
+  internal_batch_size: 64  # Batch size during interpretation passes
   integrated_gradients:
     n_steps: 50              # Number of steps for approximation
     # baseline: "zero"         # Baseline input type ('zero', 'random', 'gaussian', or path to custom baseline HDF5)
     # random_seed: 42          # Seed for random/gaussian baselines
-    internal_batch_size: 64  # Batch size during interpretation passes
 
 # Feature extraction parameters (applied to attribution maps)
 # feature_extraction:

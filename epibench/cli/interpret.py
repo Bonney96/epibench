@@ -200,7 +200,7 @@ def interpret_main(args):
         
         # Note: Config object `config` is now InterpretConfig, doesn't have batch size directly.
         # Batch size is mainly a CLI concern for interpretation.
-        batch_size = args.batch_size if args.batch_size is not None else config.interpretation.integrated_gradients.internal_batch_size # Use IG internal_batch_size as default
+        batch_size = args.batch_size if args.batch_size is not None else config.interpretation.internal_batch_size # Use interpretation.internal_batch_size as default
         num_workers = 0 # Usually set to 0 for interpretation unless I/O is bottleneck
 
         logger.info(f"Loading interpretation input data from: {interpret_data_path} with batch size: {batch_size}")
@@ -253,7 +253,7 @@ def interpret_main(args):
                  baseline_type=ig_params.baseline_type,
                  input_batch=features,
                  custom_path=ig_params.custom_baseline_path, 
-                 seed=config.interpretation.seed # Pass seed from config
+                 seed=interpret_params.seed # Pass seed from interpretation params
              )
              baseline = baseline.to(device)
              

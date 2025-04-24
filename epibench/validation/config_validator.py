@@ -204,6 +204,12 @@ class InterpretationParams(BaseModel):
         default_factory=IntegratedGradientsParams,
         description="Parameters specific to the Integrated Gradients method."
     )
+    internal_batch_size: int = Field(
+        64, 
+        gt=0, 
+        description="Batch size used internally during attribution calculation steps."
+    )
+    seed: Optional[int] = Field(None, description="Random seed for reproducibility in interpretation steps (e.g., baseline generation).")
     # Add fields for other methods here if needed in the future
     # e.g., shap_params: Optional[ShapParams] = None 
 
