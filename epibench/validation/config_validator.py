@@ -1,7 +1,7 @@
 import yaml
-from pydantic import BaseModel, Field, validator, FilePath, DirectoryPath, field_validator, conint, confloat
+from pydantic import BaseModel, Field, validator, FilePath, DirectoryPath, field_validator, conint, confloat, ValidationError
 from pydantic_core.core_schema import ValidationInfo
-from typing import List, Optional, Literal, Union, Dict, Any
+from typing import List, Optional, Literal, Union, Dict, Any, Annotated
 import logging
 import os
 from pathlib import Path
@@ -141,7 +141,7 @@ if __name__ == '__main__':
 
 # Nested model for Integrated Gradients specific parameters
 class IntegratedGradientsParams(BaseModel):
-    n_steps: conint(gt=0) = Field(
+    n_steps: Annotated[int, conint(gt=0)] = Field(
         50,
         description="Number of steps for approximation in Integrated Gradients."
     )
@@ -213,11 +213,11 @@ class FeatureExtractionParams(BaseModel):
         True,
         description="Whether to use absolute attribution values for ranking/thresholding."
     )
-    top_k: Optional[conint(gt=0)] = Field(
+    top_k: Optional[Annotated[int, conint(gt=0)]] = Field(
         None,
         description="Extract the top K features based on attribution score. Takes precedence over threshold if both are set."
     )
-    threshold: Optional[confloat(ge=0)] = Field(
+    threshold: Optional[Annotated[float, confloat(ge=0)]] = Field(
         None,
         description="Extract features with attribution scores (absolute if use_absolute_value is True) above this threshold."
     )
