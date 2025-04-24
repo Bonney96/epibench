@@ -254,24 +254,27 @@ def interpret_main(args):
                  if coordinates_batch:
                      logger.debug(f"Batch {batch_idx} - coordinates_batch type: {type(coordinates_batch)}")
                      logger.debug(f"Batch {batch_idx} - coordinates_batch length: {len(coordinates_batch)}")
+                     # Check for None values within the batch list
+                     none_count = sum(1 for c in coordinates_batch if c is None)
+                     if none_count > 0:
+                         logger.debug(f"Batch {batch_idx} - Found {none_count} None values in coordinates_batch!")
+
                      for i, coord_elem in enumerate(coordinates_batch):
-                         logger.debug(f"Batch {batch_idx} - coord element {i} type: {type(coord_elem)}")
-                         if isinstance(coord_elem, (torch.Tensor, np.ndarray)):
-                             logger.debug(f"Batch {batch_idx} - coord element {i} shape: {coord_elem.shape}")
-                             logger.debug(f"Batch {batch_idx} - coord element {i} dtype: {coord_elem.dtype}")
-                             # Log first few values if possible
-                             try:
-                                  if isinstance(coord_elem, torch.Tensor):
-                                      coord_elem_np = coord_elem.cpu().numpy()
-                                  else:
-                                      coord_elem_np = coord_elem
-                                  logger.debug(f"Batch {batch_idx} - coord element {i} head: {coord_elem_np[:5]}")
-                             except Exception as log_e:
-                                  logger.debug(f"Batch {batch_idx} - Could not log head of coord element {i}: {log_e}")
-                         else:
-                              logger.debug(f"Batch {batch_idx} - coord element {i} value: {coord_elem}") # Log non-array value
+                         # Only log details for the first few non-None elements
+                         if i < 5 and coord_elem is not None:
+                             logger.debug(f"Batch {batch_idx} - coord element {i} type: {type(coord_elem)}")
+                             # Assuming coord_elem is a dict as per HDF5Dataset
+                             if isinstance(coord_elem, dict):
+                                  logger.debug(f"Batch {batch_idx} - coord element {i} value: {coord_elem}")
+                             else:
+                                 # Log if it's something unexpected
+                                 logger.debug(f"Batch {batch_idx} - coord element {i} UNEXPECTED TYPE: {type(coord_elem)}, value: {coord_elem}")
+                         elif coord_elem is None:
+                             # Optionally log the index of None values if needed
+                             # logger.debug(f"Batch {batch_idx} - coord element {i} is None")
+                             pass # Avoid spamming for every None
                  else:
-                     logger.debug(f"Batch {batch_idx} - No coordinates returned in batch.")
+                     logger.debug(f"Batch {batch_idx} - No coordinates returned in batch (coordinates_batch is empty or None).")
              # --- End Debug Logging ---
 
              # --- Calculate Attributions for the Batch ---
@@ -291,7 +294,11 @@ def interpret_main(args):
              # --- Collect Results --- 
              all_attributions.append(batch_attributions.cpu().detach().numpy())
              # Append coordinates for this batch
-             all_coordinates.extend(coordinates_batch) # HDF5Dataset returns list of dicts
+             # Filter out None values before extending, just in case
+             valid_coordinates = [coord for coord in coordinates_batch if coord is not None]
+             if len(valid_coordinates) != len(coordinates_batch):
+                 logger.warning(f"Batch {batch_idx}: Filtered out {len(coordinates_batch) - len(valid_coordinates)} None coordinates.")
+             all_coordinates.extend(valid_coordinates) # Extend with only valid dicts
 
     except Exception as e:
         logger.error(f"Error during attribution calculation: {e}", exc_info=True)
