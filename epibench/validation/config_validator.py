@@ -6,6 +6,9 @@ import logging
 import os
 from pathlib import Path
 
+# Get a logger for this module
+logger = logging.getLogger(__name__)
+
 # Define allowed logging levels
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
