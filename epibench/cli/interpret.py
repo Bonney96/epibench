@@ -244,31 +244,52 @@ def interpret_main(args):
 
     logger.info("Calculating Integrated Gradients attributions...")
     try:
-        for batch in tqdm(interpret_loader, desc="Calculating Attributions", total=len(interpret_loader)):
+        for batch_idx, batch in enumerate(tqdm(interpret_loader, desc="Calculating Attributions", total=len(interpret_loader))):
              features, _, coordinates_batch = batch # HDF5Dataset now returns coordinates
              features = features.to(device)
-             
-             # --- Baseline Generation --- 
-             baseline = generate_baseline(
-                 baseline_type=ig_params.baseline_type,
-                 input_batch=features,
-                 custom_path=ig_params.custom_baseline_path, 
-                 seed=interpret_params.seed # Pass seed from interpretation params
-             )
-             baseline = baseline.to(device)
-             
-             # --- Attribution Calculation --- 
-             # Pass the model directly, ensure it's on the correct device
-             attributions_batch = calculate_integrated_gradients(
+
+             # --- Add Debug Logging ---
+             if batch_idx == 0: # Log only for the first batch to avoid spam
+                 logger.debug(f"Batch {batch_idx} - features shape: {features.shape}")
+                 if coordinates_batch:
+                     logger.debug(f"Batch {batch_idx} - coordinates_batch type: {type(coordinates_batch)}")
+                     logger.debug(f"Batch {batch_idx} - coordinates_batch length: {len(coordinates_batch)}")
+                     for i, coord_elem in enumerate(coordinates_batch):
+                         logger.debug(f"Batch {batch_idx} - coord element {i} type: {type(coord_elem)}")
+                         if isinstance(coord_elem, (torch.Tensor, np.ndarray)):
+                             logger.debug(f"Batch {batch_idx} - coord element {i} shape: {coord_elem.shape}")
+                             logger.debug(f"Batch {batch_idx} - coord element {i} dtype: {coord_elem.dtype}")
+                             # Log first few values if possible
+                             try:
+                                  if isinstance(coord_elem, torch.Tensor):
+                                      coord_elem_np = coord_elem.cpu().numpy()
+                                  else:
+                                      coord_elem_np = coord_elem
+                                  logger.debug(f"Batch {batch_idx} - coord element {i} head: {coord_elem_np[:5]}")
+                             except Exception as log_e:
+                                  logger.debug(f"Batch {batch_idx} - Could not log head of coord element {i}: {log_e}")
+                         else:
+                              logger.debug(f"Batch {batch_idx} - coord element {i} value: {coord_elem}") # Log non-array value
+                 else:
+                     logger.debug(f"Batch {batch_idx} - No coordinates returned in batch.")
+             # --- End Debug Logging ---
+
+             # --- Calculate Attributions for the Batch ---
+             batch_attributions = calculate_integrated_gradients(
                  model=model,
                  inputs=features,
-                 baseline=baseline,
+                 baseline=generate_baseline(
+                     baseline_type=ig_params.baseline_type,
+                     input_batch=features,
+                     custom_path=ig_params.custom_baseline_path, 
+                     seed=interpret_params.seed # Pass seed from interpretation params
+                 ),
                  target_index=ig_params.target_output_index,
                  n_steps=ig_params.n_steps
              )
              
              # --- Collect Results --- 
-             all_attributions.append(attributions_batch.cpu().detach().numpy())
+             all_attributions.append(batch_attributions.cpu().detach().numpy())
              # Append coordinates for this batch
              all_coordinates.extend(coordinates_batch) # HDF5Dataset returns list of dicts
 
