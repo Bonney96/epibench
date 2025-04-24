@@ -369,7 +369,7 @@ def interpret_main(args):
              logger.info("Skipping feature extraction as top_k/threshold not specified.")
              
         # --- Plotting (Optional) ---
-        if config.output.save_plots:
+        if config.output.generate_plots:
              logger.info("Generating and saving plots...")
              generate_and_save_plots(
                  output_dir=output_dir,
