@@ -293,12 +293,8 @@ def interpret_main(args):
              
              # --- Collect Results --- 
              all_attributions.append(batch_attributions.cpu().detach().numpy())
-             # Append coordinates for this batch
-             # Filter out None values before extending, just in case
-             valid_coordinates = [coord for coord in coordinates_batch if coord is not None]
-             if len(valid_coordinates) != len(coordinates_batch):
-                 logger.warning(f"Batch {batch_idx}: Filtered out {len(coordinates_batch) - len(valid_coordinates)} None coordinates.")
-             all_coordinates.extend(valid_coordinates) # Extend with only valid dicts
+             # Append coordinates for this batch - KEEP None values to maintain alignment
+             all_coordinates.extend(coordinates_batch) # Extend with original batch, including None
 
     except Exception as e:
         logger.error(f"Error during attribution calculation: {e}", exc_info=True)

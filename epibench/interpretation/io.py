@@ -72,9 +72,20 @@ def save_interpretation_results(output_dir: Union[str, Path],
             logger.error(f"Coordinate count ({num_samples}) does not match attribution sample count ({attributions.shape[0]}). Aborting save.")
             raise ValueError("Mismatch between coordinates and attributions count.")
             
-        chroms = np.array([c['chrom'] for c in coordinates], dtype=h5py.string_dtype(encoding='utf-8'))
-        starts = np.array([c['start'] for c in coordinates], dtype=np.int64)
-        ends = np.array([c['end'] for c in coordinates], dtype=np.int64)
+        # Handle potential None values in coordinates list
+        # Provide default values if coordinate dict is None
+        default_chrom = ""
+        default_pos = -1 
+        
+        chroms = np.array([
+            c['chrom'] if c is not None else default_chrom for c in coordinates
+        ], dtype=h5py.string_dtype(encoding='utf-8'))
+        starts = np.array([
+            c['start'] if c is not None else default_pos for c in coordinates
+        ], dtype=np.int64)
+        ends = np.array([
+            c['end'] if c is not None else default_pos for c in coordinates
+        ], dtype=np.int64)
 
         with h5py.File(output_path, 'w') as f:
             # Compression settings
