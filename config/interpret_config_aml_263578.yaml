@@ -50,8 +50,8 @@ visualization:
     - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K4me3_R1.bigwig
     - /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/samples/AML/263578/263578-20118_3_pb-H3K9me3_R1.bigwig
 
-  max_samples_to_plot: 100 # Limit the number of samples plotted to avoid excessive runtime/output
-  plot_dpi: 150            # Resolution for saved plot images
+  max_samples_to_plot: 10 # Limit the number of samples plotted to avoid excessive runtime/output
+  plot_dpi: 200            # Resolution for saved plot images
   # colormap: "viridis"      # Colormap for attribution heatmap
 
 # Logging Configuration

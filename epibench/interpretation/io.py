@@ -290,45 +290,44 @@ def generate_and_save_plots(output_dir: Union[str, Path],
     
     logger.info(f"Generating plots for the first {samples_to_plot} samples.")
 
-    # Assuming standard structure: 4 DNA channels + N histone channels
-    # Need to know the exact channel structure from the model/data config ideally
+    # Define expected structure: 4 DNA + N Histone + 1 Boundary
     num_dna_channels = 4
-    histone_channel_names = getattr(vis_config, 'histone_names', [])
-    num_histone_channels = len(histone_channel_names)
-    expected_total_channels = num_dna_channels + num_histone_channels
-    
-    if attributions.shape[2] != expected_total_channels:
-        logger.warning(f"Attribution channel count ({attributions.shape[2]}) doesn't match expected ({expected_total_channels}). Adjusting plot labels/data slicing.")
-        # Adjust histone names if possible, or plot all channels generically
-        if attributions.shape[2] > num_dna_channels:
-             num_histone_channels = attributions.shape[2] - num_dna_channels
-             # Use generic names if mismatch
-             if len(histone_channel_names) != num_histone_channels:
-                  histone_channel_names = [f'Histone_{i+1}' for i in range(num_histone_channels)]
-        else:
-            # Only plot DNA channels?
-            logger.warning("Fewer channels than expected. Plotting available channels.")
-            num_histone_channels = 0
-            histone_channel_names = []
-            
+    histone_channel_names_config = getattr(vis_config, 'histone_names', []) # Names from config
+    num_histone_channels_config = len(histone_channel_names_config)
+    expected_total_channels = num_dna_channels + num_histone_channels_config + 1 # Including boundary channel
+    num_channels_actual = attributions.shape[2]
+
     dna_channel_names = ['A', 'C', 'G', 'T']
-    all_channel_names = dna_channel_names + histone_channel_names
-    num_total_channels = attributions.shape[2] # Use actual number of channels
-
-    # Prepare y-axis labels for attribution plot
-    y_labels_attr = all_channel_names[:num_total_channels]
     
-    # Prepare y-axis labels for ground truth plot (matches config)
-    y_labels_gt = histone_channel_names # From vis_config.histone_names
+    # Determine the actual number of histone channels present in the data
+    num_histone_channels_actual = max(0, num_channels_actual - num_dna_channels - 1)
+    
+    # Generate labels based on actual data structure
+    if num_histone_channels_actual == num_histone_channels_config:
+        histone_channel_names_actual = histone_channel_names_config
+    else:
+        logger.warning(f"Mismatch between configured histone names ({num_histone_channels_config}) and detected histone channels ({num_histone_channels_actual}). Using generic names.")
+        histone_channel_names_actual = [f'Histone_{i+1}' for i in range(num_histone_channels_actual)]
+        
+    # Define labels for the attribution plot (excluding the boundary channel)
+    y_labels_attr = dna_channel_names + histone_channel_names_actual
+    num_channels_to_plot_attr = num_dna_channels + num_histone_channels_actual
+    
+    # Define labels for the ground truth plot (using names from config)
+    y_labels_gt = histone_channel_names_config # Ground truth uses config names
+    num_histone_channels_gt = num_histone_channels_config
 
-    # Determine a suitable shared color scale for attributions
-    # Use a percentile to avoid outliers dominating the scale
-    abs_max_attr = np.percentile(np.abs(attributions[:samples_to_plot]), 99.5)
+    # Log channel handling
+    logger.info(f"Attribution data has {num_channels_actual} channels. Plotting {num_channels_to_plot_attr} channels (DNA + Histone). Ground truth has {num_histone_channels_gt} channels.")
+
+    # Determine a suitable shared color scale for attributions (excluding boundary channel)
+    abs_max_attr = np.percentile(np.abs(attributions[:samples_to_plot, :, :num_channels_to_plot_attr]), 99.5)
     vmin_attr, vmax_attr = -abs_max_attr, abs_max_attr
 
     for i in range(samples_to_plot):
         logger.debug(f"Generating plot for sample index {i}")
-        sample_attributions = attributions[i] # Shape: (seq_len, num_total_channels)
+        # Select only DNA and Histone attribution channels for plotting
+        sample_attributions_to_plot = attributions[i, :, :num_channels_to_plot_attr] # Shape: (seq_len, num_dna+num_histone_actual)
         sample_coords = coordinates[i]
         chrom = sample_coords['chrom']
         start = sample_coords['start']
@@ -340,27 +339,27 @@ def generate_and_save_plots(output_dir: Union[str, Path],
                 chrom=chrom,
                 start=start,
                 end=end,
-                histone_names=vis_config.histone_names, # Names from config
+                histone_names=histone_channel_names_config, # Names from config
                 bigwig_paths=vis_config.histone_bigwig_paths, # Paths from config
                 target_length=seq_len # Resize to match attribution length
             )
             # Ensure ground truth data has the correct shape (num_histones_config, seq_len)
-            if ground_truth_histones.shape != (len(vis_config.histone_names), seq_len):
-                 logger.warning(f"Unexpected shape for ground truth histone data for sample {i}: {ground_truth_histones.shape}. Expected: ({len(vis_config.histone_names)}, {seq_len}). Skipping ground truth plot.")
+            if ground_truth_histones.shape != (num_histone_channels_gt, seq_len):
+                 logger.warning(f"Unexpected shape for ground truth histone data for sample {i}: {ground_truth_histones.shape}. Expected: ({num_histone_channels_gt}, {seq_len}). Skipping ground truth plot.")
                  ground_truth_histones = None # Cannot plot if shape is wrong
 
             # Create figure with 3 subplots: attribution, ground truth, region
             # Adjust height ratios based on number of tracks
-            height_ratios = [num_total_channels, num_histone_channels, 1] # Give more space to heatmaps
-            fig, axes = plt.subplots(3, 1, figsize=(15, 2 + 0.6 * num_total_channels + 0.6 * num_histone_channels), 
+            height_ratios = [num_channels_to_plot_attr, num_histone_channels_gt, 1] # Give more space to heatmaps
+            fig, axes = plt.subplots(3, 1, figsize=(15, 2 + 0.6 * num_channels_to_plot_attr + 0.6 * num_histone_channels_gt), 
                                      sharex=True, gridspec_kw={'height_ratios': height_ratios})
             
             fig.suptitle(f"Feature Importance (Integrated Gradients) - Sample {i}\nRegion: {chrom}:{start}-{end}", fontsize=14)
 
             # --- 1. Attribution Heatmap --- #
             ax1 = axes[0]
-            # Transpose for heatmap: (channels, seq_len)
-            sns.heatmap(sample_attributions.T, ax=ax1, cmap="vlag", 
+            # Transpose for heatmap: (channels_to_plot, seq_len)
+            sns.heatmap(sample_attributions_to_plot.T, ax=ax1, cmap="vlag", 
                         vmin=vmin_attr, vmax=vmax_attr, 
                         cbar_kws={'label': 'Attribution Score'}, 
                         yticklabels=y_labels_attr)
@@ -388,19 +387,48 @@ def generate_and_save_plots(output_dir: Union[str, Path],
 
             # --- 3. Region Indicator --- #
             ax3 = axes[2]
+            # Calculate relative start/end within the seq_len window
+            # User confirmed 'start' and 'end' are the Region of Interest (ROI).
+            # Assume the seq_len window (e.g., 10000bp) is centered around the ROI's midpoint.
+            roi_mid_point = start + (end - start) // 2
+            window_start_coord = roi_mid_point - seq_len // 2 # Estimated start coordinate of the 10kb window
+            
+            # Calculate ROI start/end relative to the window_start_coord
+            relative_start = max(0, start - window_start_coord)
+            relative_end = min(seq_len, end - window_start_coord) # Relative end is end_coord - window_start_coord
+
             region_indicator = np.zeros(seq_len)
-            # Assuming the input region corresponds directly to the sequence length
-            # If there's padding, this needs adjustment based on how data was processed
-            region_indicator[:] = 1 # Indicate the whole window for now
-            # Simple blue bar indicator
+            # Ensure coordinates are valid within the window
+            if relative_start < relative_end and relative_start < seq_len and relative_end > 0:
+                 # Make sure indices are integers for slicing
+                 plot_start_idx = int(np.floor(relative_start))
+                 plot_end_idx = int(np.ceil(relative_end))
+                 region_indicator[max(0, plot_start_idx):min(seq_len, plot_end_idx)] = 1
+            else:
+                 logger.warning(f"Calculated relative region invalid or outside window for sample {i}: rel_start={relative_start}, rel_end={relative_end}. Plotting full bar.")
+                 region_indicator[:] = 1 # Fallback to full bar if coords invalid
+
+            # Plot the accurate region bar
             ax3.fill_between(np.arange(seq_len), 0, region_indicator, color='steelblue')
             ax3.set_yticks([])
             ax3.set_ylabel("Region", rotation=0, labelpad=20)
             ax3.set_xlabel("Sequence Position")
-            # Optional: Add dashed lines if TSS or other features are known
-            # ax1.axvline(x=tss_pos, color='blue', linestyle='--', linewidth=1.5)
-            # ax2.axvline(x=tss_pos, color='blue', linestyle='--', linewidth=1.5)
-            # ax3.axvline(x=tss_pos, color='blue', linestyle='--', linewidth=1.5)
+            
+            # Add vertical dashed lines to the heatmaps using calculated relative coords
+            if relative_start < relative_end and relative_start < seq_len and relative_end > 0:
+                 line_color = 'blue'
+                 line_style = '--'
+                 line_width = 1.0
+                 # Use the precise relative_start and relative_end for lines
+                 ax1.axvline(x=relative_start, color=line_color, linestyle=line_style, linewidth=line_width)
+                 ax1.axvline(x=relative_end, color=line_color, linestyle=line_style, linewidth=line_width)
+                 if ground_truth_histones is not None: # Only add to ax2 if it was plotted
+                     ax2.axvline(x=relative_start, color=line_color, linestyle=line_style, linewidth=line_width)
+                     ax2.axvline(x=relative_end, color=line_color, linestyle=line_style, linewidth=line_width)
+            # Optional: Add dashed lines if TSS or other features are known (keep commented)
+            # ax1.axvline(x=tss_pos, color='purple', linestyle=':', linewidth=1.5)
+            # ax2.axvline(x=tss_pos, color='purple', linestyle=':', linewidth=1.5)
+            # ax3.axvline(x=tss_pos, color='purple', linestyle=':', linewidth=1.5)
 
             plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to prevent title overlap
 
