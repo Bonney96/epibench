@@ -414,6 +414,29 @@ def generate_and_save_plots(output_dir: Union[str, Path],
             ax3.set_ylabel("Region", rotation=0, labelpad=20)
             ax3.set_xlabel("Sequence Position")
             
+            # --- Customize x-axis ticks on the bottom plot (ax3) --- 
+            # Determine a suitable interval based on sequence length
+            if seq_len > 5000:
+                 tick_interval = 2000
+            elif seq_len > 1000:
+                 tick_interval = 1000
+            elif seq_len > 200:
+                tick_interval = 200
+            else:
+                 tick_interval = 50 # Default for shorter sequences
+                 
+            # Generate tick positions
+            major_ticks = np.arange(0, seq_len + 1, tick_interval) # Include seq_len if it's a multiple
+            ax3.set_xticks(major_ticks)
+            # Optionally set minor ticks if desired
+            # minor_ticks = np.arange(0, seq_len, tick_interval // 2)
+            # ax3.set_xticks(minor_ticks, minor=True)
+            # ax3.grid(which='minor', axis='x', linestyle=':', alpha=0.7) # Example for minor grid
+            
+            # Rotate labels slightly if they still overlap (optional)
+            # plt.setp(ax3.get_xticklabels(), rotation=30, ha="right")
+            # --- End x-axis tick customization ---
+            
             # Add vertical dashed lines to the heatmaps using calculated relative coords
             if relative_start < relative_end and relative_start < seq_len and relative_end > 0:
                  line_color = 'blue'
