@@ -1,0 +1,20 @@
+# all_samples_config.yaml
+- name: 463352
+  process_data_config: config/process_config_aml_463352.yaml
+  train_config: config/train_config_aml_463352.yaml
+  # Optional: input_data_for_prediction: path/to/input.h5
+- name: 263578
+  process_data_config: config/process_config_aml_263578.yaml
+  train_config: config/train_config_aml_263578.yaml
+- name: 847670
+  process_data_config: config/process_config_aml_847670.yaml
+  train_config: config/train_config_aml_847670.yaml
+- name: RO04050
+  process_data_config: config/process_config_cd34_RO04050.yaml
+  train_config: config/train_config_cd34_RO04050.yaml
+- name: RO04068
+  process_data_config: config/process_config_cd34_RO04068.yaml
+  train_config: config/train_config_cd34_RO04068.yaml
+- name: RO04046
+  process_data_config: config/process_config_cd34_RO04046.yaml
+  train_config: config/train_config_cd34_RO04046.yaml 
