@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ run_metadata.get('report_title', 'EpiBench Evaluation Report') }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-9ndCyUaIbzAi2FUVXJi0CjmCapSmO7SnpJef0486qhLnuZ2cdeRhO02iuK6FUUVM" crossorigin="anonymous">
+    <style>
+        :root {
+            /* Define CSS variables from theme config */
+            --epibench-primary-color: {{ theme.get('primary_color', '#0d6efd') }};
+            --epibench-font-family: {{ theme.get('font_family', 'sans-serif') }};
+        }
+        body {
+            /* Apply font family */
+            font-family: var(--epibench-font-family);
+        }
+        .report-header {
+            background-color: #f8f9fa;
+            padding: 2rem 1rem;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .section-title {
+            margin-top: 2.5rem;
+            margin-bottom: 1.5rem;
+            /* Use primary color for border */
+            border-bottom: 2px solid var(--epibench-primary-color);
+            padding-bottom: 0.5rem;
+        }
+        .plot-container img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #dee2e6;
+            margin-bottom: 1rem;
+        }
+        .plotly-graph-div {
+             border: 1px solid #dee2e6;
+             margin-bottom: 1rem;
+        }
+        .table-responsive {
+            margin-bottom: 1rem;
+        }
+        .footer {
+            margin-top: 3rem;
+            padding-top: 1rem;
+            border-top: 1px solid #dee2e6;
+            font-size: 0.9em;
+            color: #6c757d;
+        }
+        .table thead th {
+            background-color: #e9ecef;
+        }
+        .card {
+            margin-bottom: 1.5rem;
+        }
+        /* Improve printing */
+        @media print {
+            .report-header, .footer {
+                background-color: #fff !important; /* Remove background for printing */
+            }
+            .section-title {
+                border-bottom: 2px solid #000;
+            }
+            .table thead th {
+                background-color: #eee !important; 
+            }
+            .plotly-graph-div, .plot-container img {
+                 page-break-inside: avoid; /* Try to keep plots from breaking */
+            }
+            .card {
+                 page-break-inside: avoid;
+            }
+            a[href^="http"]:after { content: " (" attr(href) ")"; font-size: 90%; } /* Show URLs */
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <header class="report-header text-center">
+            <h1 class="display-5">{{ run_metadata.get('report_title', 'EpiBench Evaluation Report') }}</h1>
+            {% if run_metadata %}
+            <p class="lead text-muted">
+                Generated on: {{ run_metadata.timestamp.strftime('%Y-%m-%d %H:%M:%S') if run_metadata.timestamp else 'N/A' }} | 
+                Completed Samples: {{ run_metadata.get('completed_samples_count', 'N/A') }} / {{ run_metadata.get('total_samples_in_checkpoint', 'N/A') }}
+            </p>
+            <p class="text-muted small">Output Directory: {{ run_metadata.get('base_output_directory', 'N/A') }}</p>
+            {% endif %}
+        </header>
+
+        <main>
+            <!-- Summary Statistics Section -->
+            {% if 'summary_stats' in included_sections %}
+            <section id="summary-stats">
+                <h2 class="section-title">Summary Statistics</h2>
+                {% if tables.summary_statistics %}
+                    <div class="table-responsive">
+                        {{ tables.summary_statistics | safe }}
+                    </div>
+                {% else %}
+                    <div class="alert alert-warning" role="alert">
+                        No summary statistics available.
+                    </div>
+                {% endif %}
+            </section>
+            {% endif %}
+
+            <!-- Plots Section -->
+            {% if 'plots' in included_sections %}
+            <section id="plots">
+                <h2 class="section-title">Visualizations</h2>
+                <div class="row">
+                    {% if plots.accuracy_bar %}
+                    <div class="col-lg-6">
+                        <div class="card">
+                            <div class="card-header">Accuracy per Sample</div>
+                            <div class="card-body plot-container text-center">
+                                <img src="{{ plots.accuracy_bar }}" alt="Accuracy per Sample Bar Chart">
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if plots.mse_r2_scatter %}
+                    <div class="col-lg-6">
+                         <div class="card">
+                            <div class="card-header">MSE vs R²</div>
+                             <div class="card-body plot-container">
+                                {{ plots.mse_r2_scatter | safe }}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    {# Add more plot placeholders here as needed #}
+                    {# Example: 
+                    {% if plots.some_other_plot %}
+                    <div class="col-lg-6">
+                        <div class="card">
+                             <div class="card-header">Some Other Plot</div>
+                             <div class="card-body plot-container">
+                                {% if plots.some_other_plot is string and plots.some_other_plot.startswith('data:image') %}
+                                    <img src="{{ plots.some_other_plot }}" alt="Some Other Plot">
+                                {% else %}
+                                    {{ plots.some_other_plot | safe }}
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    #}
+                </div>
+                {% if not plots %}
+                 <div class="alert alert-info" role="alert">
+                    No visualizations generated.
+                </div>
+                {% endif %}
+            </section>
+            {% endif %}
+
+            <!-- Detailed Metrics Table Section -->
+            {% if 'detailed_metrics' in included_sections %}
+            <section id="detailed-metrics">
+                <h2 class="section-title">Detailed Metrics per Sample</h2>
+                {% if tables.detailed_metrics %}
+                    <div class="table-responsive">
+                        {{ tables.detailed_metrics | safe }}
+                    </div>
+                {% else %}
+                    <div class="alert alert-warning" role="alert">
+                        No detailed metrics available.
+                    </div>
+                {% endif %}
+            </section>
+            {% endif %}
+            
+            <!-- Failed Samples Section -->
+            {% if 'failed_samples' in included_sections and failed_samples %}
+            <section id="failed-samples">
+                <h2 class="section-title">Failed Samples</h2>
+                <div class="alert alert-danger" role="alert">
+                    The following samples failed during processing:
+                    <ul>
+                        {% for sample_id in failed_samples %}
+                            <li>{{ sample_id }}</li>
+                        {% endfor %}
+                    </ul>
+                     Please check the logs in the respective sample output directories for details.
+                </div>
+            </section>
+            {% endif %}
+
+        </main>
+
+        <footer class="footer text-center">
+            <p>&copy; {{ run_metadata.timestamp.year if run_metadata.timestamp else '' }} EpiBench Report</p>
+        </footer>
+
+    </div> <!-- /container-fluid -->
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" integrity="sha384-geWF76RCwLtnZ8qwWowPQNguL3RmwHVBC9FhGdlKrxdiJJigb/j/68SIy3Te4Bkz" crossorigin="anonymous"></script>
+</body>
+</html> 

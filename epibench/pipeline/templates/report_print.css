@@ -1,0 +1,110 @@
+/* epibench/pipeline/templates/report_print.css */
+
+@page {
+    size: A4;
+    margin: 1.5cm; /* Slightly smaller margin than default */
+
+    @top-center {
+        content: "EpiBench Evaluation Report";
+        font-size: 9pt;
+        color: #6c757d; /* Bootstrap muted color */
+        border-bottom: 0.5pt solid #dee2e6;
+        width: 100%;
+        padding-bottom: 3pt;
+        vertical-align: bottom; /* Align to the bottom of the header area */
+    }
+
+    @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 9pt;
+        color: #6c757d;
+    }
+    
+    /* Add generated date to bottom left if needed (requires HTML element) */
+    /* @bottom-left {
+        content: string(generated-date);
+        font-size: 9pt;
+        color: #6c757d;
+    } */
+}
+
+/* Basic print styling */
+body {
+    font-family: sans-serif;
+    line-height: 1.4;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    page-break-after: avoid;
+    font-weight: bold;
+}
+
+h2.section-title {
+     border-bottom: 1pt solid #333;
+     padding-bottom: 4pt;
+     margin-top: 2rem;
+     margin-bottom: 1rem;
+}
+
+/* Try to avoid breaking tables and figures */
+table, figure, .card, .plot-container, .plotly-graph-div {
+    page-break-inside: avoid;
+}
+
+/* Ensure images scale correctly and don't overflow */
+img {
+    max-width: 100% !important;
+    height: auto;
+}
+
+/* Table styling overrides for PDF */
+.table {
+    font-size: 9pt; /* Slightly smaller font for tables in PDF */
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th, .table td {
+    border: 0.5pt solid #dee2e6;
+    padding: 4pt 6pt;
+    text-align: left;
+}
+
+.table thead th {
+    background-color: #e9ecef !important; /* Ensure background color prints */
+    font-weight: bold;
+    vertical-align: bottom;
+}
+
+.table-striped tbody tr:nth-of-type(odd) {
+    background-color: rgba(0, 0, 0, 0.03) !important; /* Ensure striping prints */
+}
+
+/* Hide elements not suitable for PDF */
+.btn, .alert-link, script {
+    display: none !important; 
+}
+
+/* Basic TOC styling (if implemented in HTML) */
+.toc a {
+    text-decoration: none;
+    color: #0d6efd;
+}
+.toc a::after {
+    content: leader('.') target-counter(attr(href url), page);
+    font-style: italic;
+    color: #6c757d;
+    margin-left: 5px;
+}
+
+/* Header and Footer Specifics (if using running elements) */
+/* 
+.running-header {
+    position: running(header);
+    text-align: center;
+}
+.running-footer {
+    position: running(footer);
+    text-align: right;
+} 
+*/ 
