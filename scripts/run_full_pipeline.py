@@ -14,6 +14,9 @@ import concurrent.futures
 import yaml  # Add yaml import for reading sample config
 import torch # Add torch import for GPU check
 
+# Import environment checker
+from scripts.check_environment import main as run_env_check
+
 # Basic logger setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -158,7 +161,7 @@ def main():
     # Input Modes: Either single sample via args or multiple via YAML config
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument(
-        "--samples-config", 
+        "--samples-config",
         help="Path to a YAML file listing multiple sample configurations to run.\n"
              "Format:\n"
              "- name: sample_a\n"
@@ -169,7 +172,7 @@ def main():
              "  ...\n"
     )
     input_group.add_argument(
-        "--single-sample-name", 
+        "--single-sample-name",
         help="Run for a single sample specified by command-line arguments."
     )
 
@@ -189,8 +192,34 @@ def main():
     # General arguments
     parser.add_argument("--output-dir", required=True, help="Base directory for all pipeline outputs.")
     parser.add_argument("--max-workers", type=int, default=1, help="Maximum number of parallel processes to use when running multiple samples.")
+    parser.add_argument(
+        "--skip-validation",
+        action="store_true",
+        help="Skip environment validation checks."
+    )
 
     args = parser.parse_args()
+
+    # --- Environment Validation ---
+    if not args.skip_validation:
+        logger.info("--- Running Environment Validation ---")
+        try:
+            run_env_check() # Exits with 0 on success, 1 on failure
+            logger.info("Environment validation passed.")
+        except SystemExit as e:
+            if e.code == 0:
+                # Expected exit on success
+                logger.info("Environment validation passed (check script exited).")
+            else:
+                # Exit code 1 means validation failed
+                logger.error("Environment validation failed. Exiting.")
+                sys.exit(e.code) # Propagate the failure exit code
+        except Exception as e:
+            logger.error(f"An unexpected error occurred during environment validation: {e}", exc_info=True)
+            sys.exit(1)
+        logger.info("-------------------------------------")
+    else:
+        logger.warning("Skipping environment validation as requested.")
 
     # --- Determine Samples to Run ---
     samples_to_run = []

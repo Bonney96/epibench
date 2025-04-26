@@ -130,6 +130,27 @@ python scripts/run_full_pipeline.py --output-dir ./pipeline_runs --samples-confi
 ```
 See `scripts/README.md` for detailed usage of the orchestration scripts.
 
+## Environment Validation
+
+Before running complex pipelines, it's crucial to ensure your environment is set up correctly. EpiBench includes a script to help with this:
+
+```bash
+python scripts/check_environment.py
+```
+
+This script checks:
+- **Python Packages:** Verifies that all packages listed in `requirements.txt` are installed and meet the specified version constraints.
+- **External Tools:** Checks for the presence (and optionally, minimum versions) of required external command-line tools in your system's PATH.
+- **Environment Variables:** Ensures that necessary environment variables are set.
+
+The script provides detailed error messages and suggestions for fixing any detected issues.
+
+The main orchestration script (`scripts/run_full_pipeline.py`) automatically runs this validation at the beginning. If you need to bypass this check (e.g., in a tightly controlled environment where you are certain of the setup), you can use the `--skip-validation` flag:
+
+```bash
+python scripts/run_full_pipeline.py --skip-validation ... [other arguments]
+```
+
 ## Contributing
 
 *Contributions Welcome!*
