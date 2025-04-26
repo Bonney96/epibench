@@ -2,6 +2,12 @@
 # -*- coding: utf-8 -*-
 """Orchestration script to run a standard EpiBench workflow:
 process-data -> train -> evaluate -> predict
+
+Fixes applied (Task 34):
+- Corrected TypeError in path construction (line ~74) by casting sample_name
+  and other config-derived values to str() before joining with pathlib.Path.
+- Corrected subprocess argument errors by replacing shorthand '-o' with
+  '--output-dir' in epibench command calls (process-data, evaluate, predict).
 """
 
 import argparse
@@ -71,16 +77,19 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path):
     logger.info(f"===== Starting Pipeline for Sample: {sample_name} =====")
 
     # --- Setup Paths ---
-    sample_output_dir = base_output_dir / sample_name
+    # Explicitly cast sample_name to string for robust path construction
+    sample_output_dir = base_output_dir / str(sample_name) 
     
-    process_out_dir = sample_output_dir / processed_data_name
-    train_out_dir = sample_output_dir / training_output_name
-    eval_out_dir = sample_output_dir / evaluation_output_name
-    predict_out_dir = sample_output_dir / prediction_output_name
+    # Cast other config-derived names to string for robustness
+    process_out_dir = sample_output_dir / str(processed_data_name)
+    train_out_dir = sample_output_dir / str(training_output_name)
+    eval_out_dir = sample_output_dir / str(evaluation_output_name)
+    predict_out_dir = sample_output_dir / str(prediction_output_name)
 
     # Expected intermediate file paths
-    test_data_path = process_out_dir / test_data_filename
-    checkpoint_path = train_out_dir / checkpoint_filename
+    # Cast filenames to string for robustness
+    test_data_path = process_out_dir / str(test_data_filename)
+    checkpoint_path = train_out_dir / str(checkpoint_filename)
     predict_input_path = Path(input_data_for_prediction) if input_data_for_prediction else test_data_path
 
     # Create directories
@@ -96,7 +105,7 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path):
         process_cmd = [
             "epibench", "process-data",
             "--config", process_data_config,
-            "-o", str(process_out_dir)
+            "--output-dir", str(process_out_dir)
         ]
         run_command(process_cmd)
 
@@ -124,7 +133,7 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path):
             "--config", train_config, # Reuse train config
             "--checkpoint", str(checkpoint_path),
             "--test-data", str(test_data_path),
-            "-o", str(eval_out_dir)
+            "--output-dir", str(eval_out_dir)
         ]
         run_command(evaluate_cmd)
 
@@ -139,7 +148,7 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path):
             "--config", train_config, # Reuse train config
             "--checkpoint", str(checkpoint_path),
             "--input-data", str(predict_input_path),
-            "-o", str(predict_out_dir)
+            "--output-dir", str(predict_out_dir)
         ]
         run_command(predict_cmd)
 
