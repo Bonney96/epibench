@@ -140,20 +140,24 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path, overwrit
                 train_config_data = yaml.safe_load(f)
 
             # Update paths relative to the pipeline output
-            # Assumes train_config has keys like data.train_path, data.val_path, output.directory
+            # Assumes train_config has keys like data.train_path, data.val_path
             # Adjust these keys based on the actual structure of your train_config YAML
             train_config_data['data']['train_path'] = str(train_h5_path.resolve())
             train_config_data['data']['val_path'] = str(val_h5_path.resolve())
-            # Add other path updates if necessary (e.g., test_path if used during training)
-            # Check if test_path exists in the config data before updating
             if train_config_data.get('data', {}).get('test_path'):
                 train_config_data['data']['test_path'] = str(test_h5_path.resolve())
             else:
                 logger.warning(f"[{sample_name}] Key 'data.test_path' not found in {train_config}. Test path may not be updated in temp config.")
-            # We might also need to set the output dir *within* the config, 
-            # overriding any default value it might have.
-            train_config_data['output']['directory'] = str(train_out_dir.resolve())
-            # Add other path updates if necessary (e.g., test_path if used during training)
+            
+            # Set the checkpoint_dir directly, as expected by the Trainer class
+            train_config_data['checkpoint_dir'] = str(train_out_dir.resolve())
+            # Remove the old attempt to set output.directory if it exists, to avoid confusion
+            if train_config_data.get('output', {}).get('directory'):
+                del train_config_data['output']['directory'] 
+                # Consider removing the whole output section if empty and not used elsewhere
+                # if not train_config_data['output']:
+                #    del train_config_data['output']
+            
 
             # Create a temporary directory if it doesn't exist
             # Apply str() casting to sample_name here as well
