@@ -11,6 +11,7 @@ from torch.cuda.amp import GradScaler, autocast # Import for mixed precision
 import gc # For garbage collection if needed
 from typing import Optional, Dict, Any, Callable # For type hinting + Callable
 import optuna
+import shutil
 
 # Use the root logger configured by LoggerManager
 logger = logging.getLogger(__name__) # Get logger for this module
@@ -347,6 +348,40 @@ class Trainer:
         logger.info(f"Training loop finished for this trial after {self.current_epoch + 1} epochs. Best Validation Loss: {self.best_val_loss:.4f}")
         self.writer.close()
         # Note: The best_val_loss is returned by HPOptimizer.objective
+
+        # --- Add logic to save last epoch as best if no validation occurred --- 
+        if self.save_best_only and self.best_val_loss == float('inf'):
+            logger.warning("Validation did not run or improve. Saving final epoch state as 'best_model.pth'.")
+            # Manually construct final epoch checkpoint path
+            last_epoch_filename = f"epoch_{self.epochs}.pth" # Assumes epochs finished
+            final_checkpoint_path = os.path.join(self.checkpoint_dir, last_epoch_filename)
+            best_checkpoint_path = os.path.join(self.checkpoint_dir, "best_model.pth")
+            
+            # Check if periodic saving already saved the last epoch
+            if os.path.exists(final_checkpoint_path):
+                 try:
+                     # Copy the last epoch checkpoint to best_model.pth
+                     shutil.copyfile(final_checkpoint_path, best_checkpoint_path)
+                     logger.info(f"Copied {last_epoch_filename} to {best_checkpoint_path}")
+                 except Exception as e:
+                     logger.error(f"Could not copy last epoch checkpoint {final_checkpoint_path} to best: {e}")
+            else:
+                 # If periodic saving didn't save the last epoch, save current state as best
+                 logger.info(f"Saving current model state as {best_checkpoint_path} because periodic saving didn't capture the final epoch.")
+                 # Need to assemble the state dictionary again
+                 state = {
+                     'epoch': self.epochs,
+                     'model_state_dict': self.model.state_dict(),
+                     'optimizer_state_dict': self.optimizer.state_dict(),
+                     'scaler_state_dict': self.scaler.state_dict() if self.use_mixed_precision else None, 
+                     'best_val_loss': self.best_val_loss, # Still inf, but saving state
+                     'config': self.config
+                 }
+                 try:
+                     torch.save(state, best_checkpoint_path)
+                     logger.info(f"Checkpoint saved to {best_checkpoint_path}")
+                 except Exception as e:
+                     logger.error(f"Failed to save final state checkpoint {best_checkpoint_path}: {e}", exc_info=True)
 
     @staticmethod
     def load_model(checkpoint_path, model, device, optimizer=None, scaler=None):
