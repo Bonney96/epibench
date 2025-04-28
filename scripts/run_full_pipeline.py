@@ -144,13 +144,20 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path, overwrit
             # Adjust these keys based on the actual structure of your train_config YAML
             train_config_data['data']['train_path'] = str(train_h5_path.resolve())
             train_config_data['data']['val_path'] = str(val_h5_path.resolve())
+            # Add other path updates if necessary (e.g., test_path if used during training)
+            # Check if test_path exists in the config data before updating
+            if train_config_data.get('data', {}).get('test_path'):
+                train_config_data['data']['test_path'] = str(test_h5_path.resolve())
+            else:
+                logger.warning(f"[{sample_name}] Key 'data.test_path' not found in {train_config}. Test path may not be updated in temp config.")
             # We might also need to set the output dir *within* the config, 
             # overriding any default value it might have.
             train_config_data['output']['directory'] = str(train_out_dir.resolve())
             # Add other path updates if necessary (e.g., test_path if used during training)
 
             # Create a temporary directory if it doesn't exist
-            temp_dir = base_output_dir / sample_name / "temp_configs"
+            # Apply str() casting to sample_name here as well
+            temp_dir = base_output_dir / str(sample_name) / "temp_configs"
             temp_dir.mkdir(parents=True, exist_ok=True)
 
             # Write updated config to a temporary file
