@@ -19,6 +19,7 @@ from pathlib import Path
 import concurrent.futures
 import yaml  # Add yaml import for reading sample config
 import torch # Add torch import for GPU check
+from epibench.validation.config_validator import validate_process_config, ProcessConfig # Import validator
 
 # Import environment checker
 from scripts.check_environment import main as run_env_check
@@ -54,8 +55,14 @@ def run_command(command: list[str]):
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
         sys.exit(1)
 
-def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path):
-    """Runs the full process->train->eval->predict pipeline for a single sample configuration."""
+def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path, overwrite: bool):
+    """Runs the full process->train->eval->predict pipeline for a single sample configuration.
+    
+    Args:
+        sample_config (dict): Configuration for the specific sample.
+        base_output_dir (Path): Base directory for all outputs.
+        overwrite (bool): If True, force reprocessing even if output files exist.
+    """
     
     sample_name = sample_config.get('name')
     process_data_config = sample_config.get('process_data_config')
@@ -68,6 +75,8 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path):
     evaluation_output_name = sample_config.get('evaluation_output_name', "evaluation_output")
     prediction_output_name = sample_config.get('prediction_output_name', "prediction_output")
     test_data_filename = sample_config.get('test_data_filename', "test.h5")
+    validation_data_filename = sample_config.get('validation_data_filename', "validation.h5") # Added for checking
+    train_data_filename = sample_config.get('train_data_filename', "train.h5") # Added for checking
     checkpoint_filename = sample_config.get('checkpoint_filename', "best_model.pth")
 
     if not all([sample_name, process_data_config, train_config]):
@@ -86,14 +95,14 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path):
     eval_out_dir = sample_output_dir / str(evaluation_output_name)
     predict_out_dir = sample_output_dir / str(prediction_output_name)
 
-    # Expected intermediate file paths
-    # Cast filenames to string for robustness
-    test_data_path = process_out_dir / str(test_data_filename)
+    # Expected intermediate file paths for checking existence and later use
+    train_h5_path = process_out_dir / str(train_data_filename)
+    val_h5_path = process_out_dir / str(validation_data_filename)
+    test_h5_path = process_out_dir / str(test_data_filename)
     checkpoint_path = train_out_dir / str(checkpoint_filename)
-    predict_input_path = Path(input_data_for_prediction) if input_data_for_prediction else test_data_path
+    predict_input_path = Path(input_data_for_prediction) if input_data_for_prediction else test_h5_path
 
-    # Create directories
-    # No error if run in parallel, exist_ok=True handles it
+    # Create directories (safe to run even if skipping processing)
     for path in [process_out_dir, train_out_dir, eval_out_dir, predict_out_dir]:
         path.mkdir(parents=True, exist_ok=True)
         # Avoid excessive logging in parallel runs, log main creation in main()
@@ -102,19 +111,28 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path):
     try:
         # --- Step 1: Process Data ---
         logger.info(f"[{sample_name}] --- Starting Step 1: Process Data ---")
-        process_cmd = [
-            "epibench", "process-data",
-            "--config", process_data_config,
-            "--output-dir", str(process_out_dir)
-        ]
-        run_command(process_cmd)
+        
+        # Check if output files exist and if overwrite is False
+        files_exist = train_h5_path.is_file() and val_h5_path.is_file() and test_h5_path.is_file()
+        
+        if not overwrite and files_exist:
+            logger.info(f"[{sample_name}] Output HDF5 files already exist in {process_out_dir}. Skipping process-data step.")
+        else:
+            if overwrite and files_exist:
+                 logger.info(f"[{sample_name}] Output HDF5 files exist, but --overwrite flag is set. Reprocessing...")
+            # If files don't exist or overwrite is True, run processing
+            process_cmd = [
+                "epibench", "process-data",
+                "--config", process_data_config,
+                "--output-dir", str(process_out_dir) # Use full argument name
+            ]
+            run_command(process_cmd)
 
         # --- Step 2: Train Model ---
         logger.info(f"[{sample_name}] --- Starting Step 2: Train Model ---")
         train_cmd = [
             "epibench", "train",
             "--config", train_config,
-            "--output-dir", str(train_out_dir)
         ]
         run_command(train_cmd)
 
@@ -124,15 +142,15 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path):
 
         # --- Step 3: Evaluate Model ---
         logger.info(f"[{sample_name}] --- Starting Step 3: Evaluate Model ---")
-        if not test_data_path.is_file():
-            raise RuntimeError(f"Process data step finished, but test data not found: {test_data_path}")
-        logger.info(f"[{sample_name}] Found test data file for evaluation: {test_data_path}")
+        if not test_h5_path.is_file():
+            raise RuntimeError(f"Process data step finished, but test data not found: {test_h5_path}")
+        logger.info(f"[{sample_name}] Found test data file for evaluation: {test_h5_path}")
 
         evaluate_cmd = [
             "epibench", "evaluate",
             "--config", train_config, # Reuse train config
             "--checkpoint", str(checkpoint_path),
-            "--test-data", str(test_data_path),
+            "--test-data", str(test_h5_path),
             "--output-dir", str(eval_out_dir)
         ]
         run_command(evaluate_cmd)
@@ -205,6 +223,11 @@ def main():
         "--skip-validation",
         action="store_true",
         help="Skip environment validation checks."
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Force reprocessing of data even if output HDF5 files already exist."
     )
 
     args = parser.parse_args()
@@ -305,9 +328,8 @@ def main():
     # Use ProcessPoolExecutor for parallel execution
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         # Submit all jobs
-        # Pass base_output_dir as a fixed argument using lambda or functools.partial if needed, 
-        # but here it's simpler to pass it directly if the function accepts it.
-        future_to_sample = {executor.submit(run_pipeline_for_sample, sample, base_output_dir): sample for sample in samples_to_run}
+        # Pass base_output_dir and args.overwrite to the worker function
+        future_to_sample = {executor.submit(run_pipeline_for_sample, sample, base_output_dir, args.overwrite): sample for sample in samples_to_run}
         
         for future in concurrent.futures.as_completed(future_to_sample):
             sample_info = future_to_sample[future]
