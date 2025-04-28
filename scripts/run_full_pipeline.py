@@ -22,6 +22,8 @@ import torch # Add torch import for GPU check
 from epibench.validation.config_validator import validate_process_config, ProcessConfig # Import validator
 import tempfile # Add tempfile import
 import shutil # Add shutil import for cleanup
+from datetime import datetime
+from typing import Optional
 
 # Import environment checker
 from scripts.check_environment import main as run_env_check
@@ -56,6 +58,48 @@ def run_command(command: list[str]):
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
         sys.exit(1)
+
+def create_temp_config(base_config_path: str, 
+                       sample_name: str,
+                       base_output_dir: Path, 
+                       updates: dict) -> Optional[str]:
+    """Loads a base YAML config, applies updates, saves to a temp file, returns temp file path."""
+    temp_config_file_path = None
+    try:
+        with open(base_config_path, 'r') as f:
+            config_data = yaml.safe_load(f)
+
+        # Apply updates from the updates dictionary
+        # Example: updates = {'data.train_path': 'new/path', 'checkpoint_dir': 'other/path'}
+        for key_path, value in updates.items():
+            keys = key_path.split('.')
+            d = config_data
+            for key in keys[:-1]:
+                d = d.setdefault(key, {}) # Create nested dicts if they don't exist
+            d[keys[-1]] = str(value) # Ensure value is string
+
+        # Create a temporary directory
+        temp_dir = base_output_dir / str(sample_name) / "temp_configs"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write updated config to a temporary file
+        temp_config_path_obj = temp_dir / f"temp_{Path(base_config_path).name}"
+        with open(temp_config_path_obj, 'w') as f:
+            yaml.dump(config_data, f, default_flow_style=False)
+            
+        temp_config_file_path = str(temp_config_path_obj.resolve())
+        logger.info(f"[{sample_name}] Created temporary config: {temp_config_file_path}")
+        return temp_config_file_path
+
+    except KeyError as e:
+        logger.error(f"[{sample_name}] Error updating base config {base_config_path}: Missing expected key path {e} during update process.", exc_info=True)
+        return None # Indicate failure
+    except FileNotFoundError:
+        logger.error(f"[{sample_name}] Base configuration file not found: {base_config_path}")
+        return None # Indicate failure
+    except Exception as e:
+        logger.error(f"[{sample_name}] Error creating temporary config from {base_config_path}: {e}", exc_info=True)
+        return None # Indicate failure
 
 def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path, overwrite: bool):
     """Runs the full process->train->eval->predict pipeline for a single sample configuration.
@@ -132,85 +176,64 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path, overwrit
 
         # --- Step 2: Train Model ---
         logger.info(f"[{sample_name}] --- Starting Step 2: Train Model ---")
-
-        # --- Dynamically update train_config paths --- 
-        temp_train_config_path = None
-        try:
-            with open(train_config, 'r') as f:
-                train_config_data = yaml.safe_load(f)
-
-            # Update paths relative to the pipeline output
-            # Assumes train_config has keys like data.train_path, data.val_path
-            # Adjust these keys based on the actual structure of your train_config YAML
-            train_config_data['data']['train_path'] = str(train_h5_path.resolve())
-            train_config_data['data']['val_path'] = str(val_h5_path.resolve())
-            if train_config_data.get('data', {}).get('test_path'):
-                train_config_data['data']['test_path'] = str(test_h5_path.resolve())
-            else:
-                logger.warning(f"[{sample_name}] Key 'data.test_path' not found in {train_config}. Test path may not be updated in temp config.")
+        train_updates = {
+            'data.train_path': train_h5_path,
+            'data.val_path': val_h5_path,
+            'data.test_path': test_h5_path, # Ensure test path is updated if needed by trainer
+            'checkpoint_dir': train_out_dir # Use the key expected by Trainer
+        }
+        temp_train_config_path = create_temp_config(train_config, sample_name, base_output_dir, train_updates)
+        
+        if not temp_train_config_path:
+            raise RuntimeError(f"Failed to create temporary training config for {sample_name}")
             
-            # Set the checkpoint_dir directly, as expected by the Trainer class
-            train_config_data['checkpoint_dir'] = str(train_out_dir.resolve())
-            # Remove the old attempt to set output.directory if it exists, to avoid confusion
-            if train_config_data.get('output', {}).get('directory'):
-                del train_config_data['output']['directory'] 
-                # Consider removing the whole output section if empty and not used elsewhere
-                # if not train_config_data['output']:
-                #    del train_config_data['output']
-            
-
-            # Create a temporary directory if it doesn't exist
-            # Apply str() casting to sample_name here as well
-            temp_dir = base_output_dir / str(sample_name) / "temp_configs"
-            temp_dir.mkdir(parents=True, exist_ok=True)
-
-            # Write updated config to a temporary file
-            # Use a predictable name within the sample's output for easier debugging
-            temp_train_config_path_obj = temp_dir / f"temp_{Path(train_config).name}"
-            with open(temp_train_config_path_obj, 'w') as f:
-                yaml.dump(train_config_data, f, default_flow_style=False)
-            temp_train_config_path = str(temp_train_config_path_obj.resolve())
-            logger.info(f"[{sample_name}] Using temporary updated train config: {temp_train_config_path}")
-
-            # --- Run Training Command --- 
-            train_cmd = [
-                "epibench", "train",
-                "--config", temp_train_config_path, # Use the temporary config file
-            ]
-            run_command(train_cmd)
-
-        except KeyError as e:
-            logger.error(f"[{sample_name}] Error updating train config {train_config}: Missing expected key {e}. Please check config structure.", exc_info=True)
-            raise # Re-raise to indicate pipeline failure for this sample
-        except Exception as e:
-            logger.error(f"[{sample_name}] Error processing or running training with {train_config}: {e}", exc_info=True)
-            raise # Re-raise
-        # finally:
-            # Optional: Clean up the temporary config file 
-            # Leaving it might be useful for debugging
-            # if temp_train_config_path and Path(temp_train_config_path).exists():
-            #     try:
-            #         Path(temp_train_config_path).unlink()
-            #     except OSError as e:
-            #         logger.warning(f"Could not delete temporary config file {temp_train_config_path}: {e}")
-
+        train_cmd = [
+            "epibench", "train",
+            "--config", temp_train_config_path, # Use the temporary config file
+        ]
+        run_command(train_cmd)
+        
         # Check for checkpoint *after* training command
         if not checkpoint_path.is_file():
-            raise RuntimeError(f"Training step finished, but checkpoint not found: {checkpoint_path}")
+            # Check if it was saved in the *intended* directory, not the default one
+            alt_checkpoint_dir_name = f"epibench_experiment_{datetime.now().strftime('%Y%m%d')}" # Approximate default name structure
+            alt_checkpoint_path = Path("checkpoints") / alt_checkpoint_dir_name / "best_model.pth" # Example default path
+            if alt_checkpoint_path.is_file():
+                 logger.warning(f"Checkpoint found in default location {alt_checkpoint_path}, not expected {checkpoint_path}. Check Trainer config.")
+                 # Optionally attempt to move/copy it?
+                 # shutil.move(alt_checkpoint_path, checkpoint_path)
+            else:
+                raise RuntimeError(f"Training step finished, but checkpoint not found: {checkpoint_path}")
         logger.info(f"[{sample_name}] Found checkpoint file: {checkpoint_path}")
 
         # --- Step 3: Evaluate Model ---
         logger.info(f"[{sample_name}] --- Starting Step 3: Evaluate Model ---")
         if not test_h5_path.is_file():
-            raise RuntimeError(f"Process data step finished, but test data not found: {test_h5_path}")
+            raise RuntimeError(f"Test data not found for evaluation: {test_h5_path}")
         logger.info(f"[{sample_name}] Found test data file for evaluation: {test_h5_path}")
+        
+        # Create temp config for evaluation (reusing train config as base)
+        eval_updates = {
+            # Update data paths needed by evaluate (might load train/val too)
+             'data.train_path': train_h5_path,
+             'data.val_path': val_h5_path,
+             'data.test_path': test_h5_path,
+             # Evaluate command takes output dir as CLI arg, no need to set in config?
+             # Check epibench evaluate --help if needed
+        }
+        # Use original train_config as the base for evaluation config updates
+        temp_eval_config_path = create_temp_config(train_config, sample_name, base_output_dir, eval_updates)
+        
+        if not temp_eval_config_path:
+            raise RuntimeError(f"Failed to create temporary evaluation config for {sample_name}")
 
         evaluate_cmd = [
             "epibench", "evaluate",
-            "--config", train_config, # Reuse train config
+            # Pass the *temporary* config with updated data paths
+            "--config", temp_eval_config_path, 
             "--checkpoint", str(checkpoint_path),
-            "--test-data", str(test_h5_path),
-            "--output-dir", str(eval_out_dir)
+            "--test-data", str(test_h5_path), # This CLI arg might override config, but update config too for safety
+            "--output-dir", str(eval_out_dir) # Evaluate takes output dir via CLI
         ]
         run_command(evaluate_cmd)
 
@@ -220,12 +243,30 @@ def run_pipeline_for_sample(sample_config: dict, base_output_dir: Path, overwrit
              raise RuntimeError(f"Input data for prediction not found: {predict_input_path}")
         logger.info(f"[{sample_name}] Using input data for prediction: {predict_input_path}")
 
+        # Create temp config for prediction (reusing train config as base)
+        predict_updates = {
+             # Update data paths needed by predict (might just be input_data_path?)
+             # Let's assume it might still load train/val/test for context/metadata
+             'data.train_path': train_h5_path,
+             'data.val_path': val_h5_path,
+             'data.test_path': test_h5_path,
+             # Update the specific input if the key exists, otherwise rely on CLI
+             # 'data.predict_input_path': predict_input_path, # Adjust key if needed
+        }
+        # Use original train_config as the base for prediction config updates
+        temp_predict_config_path = create_temp_config(train_config, sample_name, base_output_dir, predict_updates)
+        
+        if not temp_predict_config_path:
+             raise RuntimeError(f"Failed to create temporary prediction config for {sample_name}")
+
         predict_cmd = [
             "epibench", "predict",
-            "--config", train_config, # Reuse train config
+            # Pass the *temporary* config with updated data paths
+            "--config", temp_predict_config_path, 
             "--checkpoint", str(checkpoint_path),
+            # Pass input data via CLI (might override config)
             "--input-data", str(predict_input_path),
-            "--output-dir", str(predict_out_dir)
+            "--output-dir", str(predict_out_dir) # Predict takes output dir via CLI
         ]
         run_command(predict_cmd)
 
