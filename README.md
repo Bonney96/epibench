@@ -127,7 +127,7 @@ The `epibench` tool utilizes a command-line interface structured around several 
     epibench interpret --config config/interpret_config.yaml --checkpoint output/training_run_01/best_model.pth --input-data output/processed_data/interpret_subset.h5 -o output/interpretation_results
     ```
     Example visualization of feature attributions:
-    ![Feature Attribution Visualization](images/test_interpret_config_aml_263578_viz_sample_5.png)
+    ![Feature Attribution Visualization](docs/images/test_interpret_config_aml_263578_viz_sample_5.png)
 
 *   **Compare Models/Groups:** Perform comparative analyses, such as evaluating model performance differences across various sample groups defined in the configuration.
     ```bash
