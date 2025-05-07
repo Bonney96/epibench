@@ -68,10 +68,10 @@ training:
   # monitor_metric: val_loss # Metric to monitor (default: validation loss)
 
   # Total number of training epochs.
-  epochs: 50
+  epochs: 10
   
   # Early stopping configuration.
-  early_stopping_patience: 7 # Number of epochs to wait for improvement before stopping.
+  early_stopping_patience: 3 # Number of epochs to wait for improvement before stopping.
   # early_stopping_metric: val_loss # Metric to monitor (default: validation loss)
   # early_stopping_mode: min # 'min' for loss, 'max' for accuracy/R2 etc.
 
@@ -87,7 +87,7 @@ training:
 # Output configuration
 output:
   # Directory to save checkpoints, logs, etc.
-  checkpoint_dir: ./training_results/AML_263578_SeqCNNRegressor
+  checkpoint_dir: ./training_results/AML_263578_SeqCNNRegressor_new_hpo
   # filename_prefix: epibench_model
   save_best_only: true # Only save the checkpoint with the best validation score.
   save_period: 1 # Save checkpoint every N epochs (ignored if save_best_only=true).
@@ -98,7 +98,7 @@ hpo:
   # Optuna study direction ('minimize' for loss, 'maximize' for R2/correlation).
   direction: minimize
   # Number of trials to run.
-  n_trials: 30
+  n_trials: 10
   # Sampler to use ('TPE', 'Random', etc.).
   sampler: TPE
   # Pruner to use ('MedianPruner', 'HyperbandPruner', etc.).
