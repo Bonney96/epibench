@@ -130,10 +130,70 @@ class HPOptimizer:
 
     def _set_value_from_path(self, dct: Dict, path: str, value: Any):
         keys = path.split('.')
-        for key in keys[:-1]:
-            dct = dct.setdefault(key, {})
-        dct[keys[-1]] = value
-        
+        current_level = dct
+        for i, key in enumerate(keys[:-1]):
+            is_last_intermediate_key = (i == len(keys) - 2)
+            next_key_is_digit = keys[i+1].isdigit()
+
+            if isinstance(current_level, list):
+                try:
+                    idx = int(key)
+                    # Ensure list is long enough if the next level needs to be accessed
+                    if idx >= len(current_level):
+                        # Cannot access or create elements beyond the current list length implicitly here
+                        raise IndexError(f"Index {idx} out of bounds for list at path segment {'.'.join(keys[:i+1])}")
+
+                    # If we are about to set the final value and the target is a list
+                    if is_last_intermediate_key:
+                         # We will handle setting the list value in the final step
+                         current_level = current_level[idx]
+                         continue # Go to final setting step
+                    
+                    # If navigating deeper, ensure the list element is a container (dict or list)
+                    if not isinstance(current_level[idx], (dict, list)):
+                         # If next key suggests a list index, create a list, else dict
+                         if next_key_is_digit:
+                              current_level[idx] = []
+                         else:
+                              current_level[idx] = {}
+                    current_level = current_level[idx]
+                
+                except ValueError:
+                    raise KeyError(f"Error navigating path '{path}': Cannot use non-integer key '{key}' for list access at path segment {'.'.join(keys[:i+1])}")
+                except IndexError as e:
+                     raise IndexError(f"Error navigating path '{path}': {e}")
+
+            elif isinstance(current_level, dict):
+                if key not in current_level:
+                    # If next key looks like an integer index, create a list, else dict
+                    if next_key_is_digit:
+                         current_level[key] = []
+                    else:
+                         current_level[key] = {}
+                current_level = current_level[key]
+            else:
+                # Cannot navigate into a non-dict/non-list element
+                raise TypeError(f"Cannot navigate path '{path}': element at path segment {'.'.join(keys[:i])} is not a dictionary or list.")
+
+        # Set the final value
+        final_key = keys[-1]
+        if isinstance(current_level, list):
+            try:
+                idx = int(final_key)
+                # Ensure list is long enough before setting
+                while len(current_level) <= idx:
+                     current_level.append(None) # Pad with None if necessary
+                current_level[idx] = value
+            except ValueError:
+                 raise KeyError(f"Error setting value for path '{path}': Final key '{final_key}' is not a valid integer index for the target list.")
+            except IndexError:
+                 # This case should theoretically be handled by padding, but added for safety
+                 raise IndexError(f"Error setting value for path '{path}': Index {idx} out of bounds after padding.")
+        elif isinstance(current_level, dict):
+            current_level[final_key] = value
+        else:
+             raise TypeError(f"Cannot set value for path '{path}': Target container is not a dictionary or list (it is {type(current_level)}). Path segment: {'.'.join(keys[:-1]) if keys else 'root'}")
+
     def define_search_space(self, trial: optuna.trial.Trial) -> Dict[str, Any]:
         """Defines the hyperparameter search space for a trial based on base_config."""
         hpo_search_config = self.base_config.get('hpo', {}).get('search_space', {})
