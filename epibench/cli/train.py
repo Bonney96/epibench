@@ -101,39 +101,6 @@ def main(args):
         # --- Hyperparameter Optimization ---
         logger.info("Starting Hyperparameter Optimization (HPO)...")
         try:
-            # Define a factory function to create Trainer instances for Optuna trials
-            def trainer_factory(trial, hpo_config):
-                # Sample hyperparameters using the trial object
-                trial_lr = trial.suggest_float("lr", hpo_config['lr_min'], hpo_config['lr_max'], log=True)
-                trial_batch_size = trial.suggest_categorical("batch_size", hpo_config['batch_sizes'])
-                trial_optimizer_name = trial.suggest_categorical("optimizer", hpo_config['optimizers'])
-
-                # Create a trial-specific config (or update a copy)
-                # Note: This assumes HPO settings override base config settings
-                trial_config = config.copy() # Start with base config
-                trial_config['training']['learning_rate'] = trial_lr
-                trial_config['data']['batch_size'] = trial_batch_size
-                trial_config['training']['optimizer'] = trial_optimizer_name
-                # Potentially update data loaders if batch size changes?
-                # For now, assume create_dataloaders handles batch size or we recreate them.
-                # trial_train_loader, trial_val_loader = create_dataloaders(trial_config)
-
-                # Create model based on config
-                model_name = trial_config['model']['name']
-                model_params = trial_config['model'].get('params', {})
-                # Assuming a way to get the model class/constructor
-                ModelClass = models.get_model(model_name) # Needs implementation in models/__init__.py
-                model = ModelClass(**model_params).to(device)
-
-                # Instantiate Trainer for this trial
-                trainer = Trainer(
-                    model=model,
-                    config=trial_config, # Pass trial-specific config
-                    device=device,
-                    trial=trial # Pass the Optuna trial object to Trainer if needed for reporting
-                )
-                return trainer # Return only the trainer
-
             # Instantiate HPOptimizer
             # Assumes HPO config is under 'hpo' key in the main config file
             hpo_config = config.get('hpo', {})
@@ -141,28 +108,106 @@ def main(args):
                 logger.error("HPO configuration ('hpo' key) not found in the config file.")
                 sys.exit(1)
 
-            optimizer_metric = hpo_config.get('metric', 'val_loss') # Default metric
-            n_trials = hpo_config.get('n_trials', 20) # Default trials
+            # optimizer_metric = hpo_config.get('metric', 'val_loss') # Metric is implicitly val_loss in HPOptimizer.objective
+            n_trials = hpo_config.get('n_trials', 20) # Default trials from HPOptimizer or override from config
 
             hpo_optimizer = HPOptimizer(
-                config_manager=config_manager, # Pass the manager or just the config dict
-                metric=optimizer_metric,
-                # Pass trainer_factory directly
+                base_config=config, # Pass the full config dictionary
+                study_name=hpo_config.get('study_name', 'epibench_hpo_study'), # Get from HPO config or default
+                direction=hpo_config.get('direction', 'minimize'),     # Get from HPO config or default
+                storage=hpo_config.get('storage', None),               # Get from HPO config or default (None for in-memory)
+                sampler_name=hpo_config.get('sampler', 'TPE'),       # Pass sampler name string
+                pruner_name=hpo_config.get('pruner', 'MedianPruner'),       # Pass pruner name string
+                train_loader=train_loader,
+                val_loader=val_loader,
+                device=device
             )
 
             # Run optimization
-            # HPOptimizer's optimize method now takes the factory
-            best_trial = hpo_optimizer.optimize(
-                 trainer_factory=trainer_factory,
-                 train_loader=train_loader, # Pass loaders here
-                 val_loader=val_loader,
-                 n_trials=n_trials
+            hpo_optimizer.run_optimization( # HPOptimizer has its own objective method
+                 n_trials=n_trials, # Pass n_trials from config
+                 # timeout can be added if needed
+                 # n_jobs can be added if needed
             )
+            
+            best_trial_params = hpo_optimizer.get_best_params()
+            best_trial_value = hpo_optimizer.get_best_value()
+
 
             logger.info("HPO finished.")
-            logger.info(f"Best trial number: {best_trial.number}")
-            logger.info(f"Best parameters: {best_trial.params}")
-            logger.info(f"Best value ({optimizer_metric}): {best_trial.value}")
+            # logger.info(f"Best trial number: {best_trial.number}") # Accessing best_trial directly might not be available
+            logger.info(f"Best parameters: {best_trial_params}")
+            logger.info(f"Best value: {best_trial_value}")
+
+            # After HPO, train the final model with best parameters and 50 epochs
+            logger.info("Training final model with best hyperparameters...")
+            
+            # Create a new config for the final model, updating with best HPO params
+            final_model_config = config_manager.copy_config() # Get a deep copy
+            
+            # Update specific parameters from HPO results
+            # This needs careful mapping from hpo_optimizer.get_best_params() keys to config structure
+            if 'learning_rate' in best_trial_params:
+                final_model_config['training']['optimizer_params']['lr'] = best_trial_params['learning_rate']
+            if 'weight_decay' in best_trial_params:
+                final_model_config['training']['optimizer_params']['weight_decay'] = best_trial_params['weight_decay']
+            if 'dropout_rate' in best_trial_params:
+                final_model_config['model']['params']['dropout_rate'] = best_trial_params['dropout_rate']
+            # Example for fc_units - assumes HPO tunes only the first FC layer
+            # And that best_params returns a flat key like 'fc_units_0' if you named it so in define_search_space
+            # Or if define_search_space returned 'fc_units' as a single int for the first layer:
+            if 'fc_units' in best_trial_params: # If 'fc_units' was tuned as a single value for the first layer
+                 if isinstance(final_model_config['model']['params']['fc_units'], list) and \
+                    len(final_model_config['model']['params']['fc_units']) > 0:
+                    final_model_config['model']['params']['fc_units'][0] = best_trial_params['fc_units']
+                 else: # Or if fc_units in config is just an int (less likely based on current config)
+                    final_model_config['model']['params']['fc_units'] = [best_trial_params['fc_units'], 512] # Assuming a structure
+            if 'num_filters' in best_trial_params:
+                 final_model_config['model']['params']['num_filters'] = best_trial_params['num_filters']
+
+
+            # Set epochs for the final training run
+            final_model_config['training']['epochs'] = 50  # As requested
+            final_model_config['training']['early_stopping_patience'] = 7 # A reasonable patience for final run
+
+            # Update checkpoint_dir for the final model to distinguish from HPO runs
+            base_hpo_checkpoint_dir = final_model_config.get('output', {}).get('checkpoint_dir', './training_results/AML_263578_SeqCNNRegressor_new_hpo')
+            final_model_config['output']['checkpoint_dir'] = os.path.join(os.path.dirname(base_hpo_checkpoint_dir), "final_model")
+            os.makedirs(final_model_config['output']['checkpoint_dir'], exist_ok=True)
+
+            logger.info(f"Final model configuration: {final_model_config}")
+
+            # Create Model with best HPO params
+            model_name_final = final_model_config['model']['name']
+            model_params_final = final_model_config['model'].get('params', {})
+            ModelClass_final = models.get_model(model_name_final)
+            model_final = ModelClass_final(**model_params_final).to(device)
+
+            # Create Optimizer with best HPO params
+            optimizer_name_final = final_model_config['training']['optimizer']
+            optimizer_params_final = final_model_config['training'].get('optimizer_params', {})
+            OptimizerClass_final = getattr(optim, optimizer_name_final)
+            optimizer_final = OptimizerClass_final(model_final.parameters(), **optimizer_params_final)
+            
+            # Criterion remains the same
+            loss_name_final = final_model_config['training']['loss_function']
+            CriterionClass_final = getattr(torch.nn, loss_name_final)
+            criterion_final = CriterionClass_final()
+
+            # Create Trainer for the final model
+            trainer_final = Trainer(
+                model=model_final,
+                optimizer=optimizer_final,
+                criterion=criterion_final,
+                train_loader=train_loader, # Use the same data loaders
+                val_loader=val_loader,
+                config=final_model_config, # Pass the updated config
+                device=device
+            )
+            logger.info("Starting final model training...")
+            trainer_final.train()
+            logger.info("Final model training completed.")
+
 
         except ImportError as e:
              logger.error(f"Error during HPO setup: {e}. Make sure Optuna is installed (`pip install optuna`)", exc_info=True)
