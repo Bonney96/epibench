@@ -173,7 +173,7 @@ python scripts/run_full_pipeline.py --skip-validation ... [other arguments]
 
 ## Contributing
 
-Contributions are welcome! Please refer to the contributing guidelines (link to be added if available) for details on how to submit pull requests, report issues, or suggest enhancements.
+Contributions are welcome! Please refer to the contributing guidelines for details on how to submit pull requests, report issues, or suggest enhancements.
 
 ## License
 
