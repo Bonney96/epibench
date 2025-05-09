@@ -29,7 +29,7 @@ model:
     input_channels: 11
     # Configuration for the multi-branch CNN.
     # List of filter counts for each convolutional layer in a branch.
-    num_filters: 64 # Renamed from cnn_filters and assume a single value is expected per the __init__
+    num_filters: 64 # Using existing value, HPO log didn't show update for this
     # List of kernel sizes, each defining a separate branch.
     kernel_sizes: [3, 9, 25, 51]
     # Activation function ('ReLU', 'GELU', etc.).
@@ -37,9 +37,9 @@ model:
     
     # Configuration for the fully connected layers after CNN branches.
     # List of hidden unit counts for each FC layer.
-    fc_units: [1024, 512]
+    fc_units: [640, 512] # Updated based on HPO: [Best_FC0, Original_FC1]
     # Dropout rate applied after FC layers.
-    dropout_rate: 0.4
+    dropout_rate: 0.3458669205476489 # Updated based on HPO
     # Whether to use Batch Normalization in CNN and FC layers.
     use_batch_norm: true
 
@@ -49,8 +49,8 @@ training:
   optimizer: AdamW
   # Parameters for the optimizer.
   optimizer_params:
-    lr: 0.0005
-    weight_decay: 0.01
+    lr: 0.007539987592770189 # Updated based on HPO
+    weight_decay: 0.041476072284671164 # Updated based on HPO
     # Other optimizer-specific params (e.g., betas for Adam, momentum for SGD)
 
   # Name of the loss function ('MSELoss', 'L1Loss', etc.).
@@ -59,7 +59,7 @@ training:
   # loss_params: {}
 
   # Learning rate scheduler configuration (optional).
-  scheduler: ReduceLROnPlateau # Example: Reduce learning rate on plateau
+  scheduler: ReduceLROnPlateau
   scheduler_params:
     mode: min       # Monitor validation loss ('min') or metric ('max')
     factor: 0.1     # Factor by which LR is reduced
@@ -68,10 +68,10 @@ training:
   # monitor_metric: val_loss # Metric to monitor (default: validation loss)
 
   # Total number of training epochs.
-  epochs: 10
+  epochs: 50 # Updated for final model training
   
   # Early stopping configuration.
-  early_stopping_patience: 3 # Number of epochs to wait for improvement before stopping.
+  early_stopping_patience: 7 # Updated for final model training
   # early_stopping_metric: val_loss # Metric to monitor (default: validation loss)
   # early_stopping_mode: min # 'min' for loss, 'max' for accuracy/R2 etc.
 
@@ -87,7 +87,7 @@ training:
 # Output configuration
 output:
   # Directory to save checkpoints, logs, etc.
-  checkpoint_dir: ./training_results/AML_263578_SeqCNNRegressor_new_hpo
+  checkpoint_dir: ./training_results/AML_263578_SeqCNNRegressor_new_hpo/final_model
   # filename_prefix: epibench_model
   save_best_only: true # Only save the checkpoint with the best validation score.
   save_period: 1 # Save checkpoint every N epochs (ignored if save_best_only=true).
@@ -98,7 +98,7 @@ hpo:
   # Optuna study direction ('minimize' for loss, 'maximize' for R2/correlation).
   direction: minimize
   # Number of trials to run.
-  n_trials: 10
+  n_trials: 10 # Original HPO trial count that was run
   # Sampler to use ('TPE', 'Random', etc.).
   sampler: TPE
   # Pruner to use ('MedianPruner', 'HyperbandPruner', etc.).
@@ -107,8 +107,9 @@ hpo:
   # Define the hyperparameter search space.
   # Syntax: param_name: [min, max] for float/int, or [choice1, choice2] for categorical.
   search_space:
-    training.optimizer_params.lr: [0.0001, 0.01] # Log uniform scale often used
+    training.optimizer_params.lr: [0.0001, 0.01]
     training.optimizer_params.weight_decay: [0.0, 0.1]
     model.params.dropout_rate: [0.1, 0.5]
-    model.params.fc_units.0: [256, 1024] # Search space for the first FC layer units
+    model.params.fc_units.0: [256, 1024]
+    # model.params.num_filters: ["int", 16, 64, 16] # Example if num_filters was tuned
     # Add other parameters like cnn_filters, kernel_sizes if desired 

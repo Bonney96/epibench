@@ -3,6 +3,7 @@ import logging
 import sys
 import os
 import torch.optim as optim
+import copy # Import the copy module
 
 # Add project root to sys.path to allow imports from epibench
 # This assumes the script is run from the project root or similar context
@@ -143,7 +144,7 @@ def main(args):
             logger.info("Training final model with best hyperparameters...")
             
             # Create a new config for the final model, updating with best HPO params
-            final_model_config = config_manager.copy_config() # Get a deep copy
+            final_model_config = copy.deepcopy(config_manager.config) # Use copy.deepcopy
             
             # Update specific parameters from HPO results
             # This needs careful mapping from hpo_optimizer.get_best_params() keys to config structure
