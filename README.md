@@ -47,11 +47,11 @@ The corresponding target methylation value (e.g., beta value) for each region is
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/Bonney96/epibench.git
-    cd EpiBench
+    cd epibench
     ```
 2.  **Set up a Python virtual environment (Recommended):**
     ```bash
-    python -m venv .venv
+    python3 -m venv .venv
     source .venv/bin/activate  # Linux/macOS
     # or ".venv\Scripts\activate" on Windows
     ```
