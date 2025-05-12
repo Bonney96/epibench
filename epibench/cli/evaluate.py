@@ -225,13 +225,14 @@ def evaluate_main(args):
     try:
         with torch.no_grad(): # Disable gradient calculations
             for batch in tqdm(test_loader, desc="Evaluating"): 
-                # Assuming batch is a tuple/list: (inputs, targets)
-                # Adjust based on your actual DataLoader output structure
-                try:
-                    inputs, targets = batch 
-                except ValueError:
-                     logger.error("Unexpected batch structure from DataLoader. Expected (inputs, targets). Skipping batch.")
-                     continue
+                # Handle potential inclusion of coordinates or other metadata
+                if len(batch) == 3:
+                    inputs, targets, _ = batch  # Unpack coords but ignore them for now
+                elif len(batch) == 2:
+                    inputs, targets = batch # Assume standard (features, targets)
+                else:
+                    logger.error(f"Unexpected batch structure from DataLoader. Expected (inputs, targets) or (inputs, targets, coords). Skipping batch.")
+                    continue
                 
                 inputs = inputs.to(device)
                 # targets don't necessarily need to go to device if only used for metrics on CPU
