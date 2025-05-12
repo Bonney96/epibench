@@ -85,8 +85,7 @@ def evaluate_main(args):
                             np.int16, np.int32, np.int64, np.uint8,
                             np.uint16, np.uint32, np.uint64)):
             return int(obj)
-        elif isinstance(obj, (np.float_, np.float16, np.float32, 
-                            np.float64)):
+        elif isinstance(obj, (np.float64, np.float16, np.float32)):  # Updated to use np.float64 instead of np.float_
             # Convert NaN to None for JSON compatibility
             return None if np.isnan(obj) else float(obj)
         elif isinstance(obj, (np.bool_)):
