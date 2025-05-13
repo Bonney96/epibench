@@ -1,0 +1,50 @@
+# Training Configuration for AML 263578 (Region Based, Fixed Parameters)
+
+# Data loading parameters
+data:
+  train_path: ./processed_data/AML_263578_region_based/train.h5
+  val_path: ./processed_data/AML_263578_region_based/validation.h5
+  test_path: ./processed_data/AML_263578_region_based/test.h5
+  batch_size: 32
+  num_workers: 0
+  shuffle_train: true
+  shuffle_val: false
+
+# Model definition
+model:
+  name: SeqCNNRegressor
+  params:
+    input_channels: 11
+    num_filters: 32
+    kernel_sizes: [3, 9, 25, 51]
+    activation: ReLU
+    fc_units: [128]
+    dropout_rate: 0.5
+    use_batch_norm: true
+
+# Training process parameters
+training:
+  optimizer: Adam
+  optimizer_params:
+    lr: 0.001
+    weight_decay: 1e-5
+  loss_function: MSELoss
+  scheduler: ReduceLROnPlateau
+  scheduler_params:
+    mode: min
+    factor: 0.1
+    patience: 3
+    verbose: true
+  epochs: 50
+  early_stopping_patience: 10
+  device: cuda
+  gradient_clipping: 1.0
+  use_amp: false
+
+# Output configuration
+output:
+  checkpoint_dir: ./training_results/AML_263578_SeqCNNRegressor_fixed/final_model
+  save_best_only: true
+  save_period: 1
+
+# HPO section omitted (no hyperparameter optimization for this config) 
