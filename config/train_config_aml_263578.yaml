@@ -94,7 +94,7 @@ output:
 
 # Hyperparameter Optimization (HPO) settings (used if --hpo flag is passed to CLI)
 hpo:
-  enabled: false # This key primarily serves as a placeholder; actual HPO is triggered by CLI flag.
+  enabled: True # This key primarily serves as a placeholder; actual HPO is triggered by CLI flag.
   # Optuna study direction ('minimize' for loss, 'maximize' for R2/correlation).
   direction: minimize
   # Number of trials to run.
