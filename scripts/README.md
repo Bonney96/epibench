@@ -564,3 +564,7 @@ The YAML file should contain a list of dictionaries, where each dictionary repre
 ### Error Handling
 
 The script checks for the existence of required intermediate files (test data, checkpoint) before proceeding to the next step. If a `subprocess` command fails (non-zero exit code), the script logs the error and terminates the pipeline for that specific sample. When running in parallel, failures in one sample pipeline do not stop others from running. A final summary indicates the number of successful and failed pipelines.
+
+## WashU Compute2 Scripts
+
+The `scripts/compute2/` directory contains scripts specifically for use on the WashU RIS Compute2 cluster. These include Slurm batch submission scripts, interactive job launchers, and Jupyter notebook launchers tailored for the Compute2 environment. See comments in each script for usage details.
