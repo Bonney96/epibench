@@ -21,9 +21,9 @@ export MODULEPATH=/storage2/fs1/dspencer/Active/spencerlab/apps/modules/modulefi
 module load labtools
 
 # Activate virtual environment and run epibench commands
-source /storage2/fs1/dspencer/Active/spencerlab/mohamed2/tools_testing/epibench/epibench/.venv/bin/activate
+source /storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/.venv/bin/activate
 
-cd /storage2/fs1/dspencer/Active/spencerlab/mohamed2/tools_testing/epibench/jupyter_test_home
+cd //storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/jupyter_test_home
 
 # Extract second IP and print Jupyter Lab URL
 ip=$(hostname -I | awk '{print $2}')
