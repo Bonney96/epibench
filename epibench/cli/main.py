@@ -20,6 +20,7 @@ from .evaluate import setup_evaluate_parser, evaluate_main
 from .predict import setup_predict_parser, predict_main
 from .interpret import setup_interpret_parser, interpret_main
 from .compare import setup_compare_parser, compare_main
+from .logs import setup_logs_parser, logs_main
 
 # Basic logger setup for the main entry point
 # Logging will be potentially reconfigured by subcommands based on their configs
@@ -111,6 +112,15 @@ def main():
     )
     setup_compare_parser(compare_parser)
     compare_parser.set_defaults(func=compare_main)
+    
+    # Logs Command
+    logs_parser = subparsers.add_parser(
+        'logs',
+        help='Manage and analyze EpiBench execution logs.',
+        description='View, search, compare, export, and analyze logs from EpiBench runs to track experiments and analyze performance trends.'
+    )
+    setup_logs_parser(logs_parser)
+    logs_parser.set_defaults(func=logs_main)
     
     logger.debug("Parsing command line arguments...")
     args = parser.parse_args()

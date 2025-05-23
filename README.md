@@ -14,6 +14,7 @@ EpiBench is a software tool designed for predicting DNA methylation levels using
 - [Environment Validation](#environment-validation)
 - [Contributing](#contributing)
 - [License](#license)
+- [Logging, Run Tracking, and Analysis (New in v1.2)](#logging-run-tracking-and-analysis-new-in-v12)
 
 ## Overview
 
@@ -133,6 +134,42 @@ The `epibench` tool utilizes a command-line interface structured around several 
     ```bash
     epibench compare --config config/compare_config.yaml -o output/comparative_analysis
     ```
+
+## Logging, Run Tracking, and Analysis (New in v1.2)
+
+EpiBench now includes a comprehensive logging system for experiment tracking, reproducibility, and analysis. All pipeline runs are logged with detailed metadata, and you can manage and analyze logs via the CLI:
+
+### List Logs
+```bash
+epibench logs list --log-dir logs/ --status completed --format table
+```
+
+### Show Log Details
+```bash
+epibench logs show <execution_id> --log-dir logs/ --section all --format rich
+```
+
+### Search Logs
+```bash
+epibench logs search --metric "r_squared>0.9" --config "model.name=SeqCNNRegressor" --format table
+```
+
+### Compare Logs
+```bash
+epibench logs compare <run1> <run2> --focus metrics --format table
+```
+
+### Export Logs
+```bash
+epibench logs export --format csv --output logs_export.csv --fields execution_id mse r_squared
+```
+
+### Analyze Logs
+```bash
+epibench logs analyze --analysis-type summary --metric r_squared --plot
+```
+
+See [docs/logging.md](docs/logging.md) for full documentation, schema details, and advanced examples.
 
 ## Configuration
 

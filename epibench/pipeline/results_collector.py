@@ -26,6 +26,13 @@ import weasyprint
 # from epibench.pipeline.pipeline_executor import PipelineExecutor 
 # from epibench.validation.config_validator import ProcessConfig
 
+from ..logging import LogManager  # Add import for LogManager
+from ..logging.metrics_utils import (
+    calculate_derived_metrics,
+    calculate_performance_score,
+    aggregate_sample_metrics
+)
+
 logger = logging.getLogger(__name__)
 
 # Helper class for JSON serialization of numpy types
@@ -83,7 +90,7 @@ class ResultsCollector:
     Collects, aggregates, and reports results from pipeline execution across multiple samples.
     """
 
-    def __init__(self, base_output_directory: Path, checkpoint_data: Dict[str, Any], report_config: Optional[Dict[str, Any]] = None):
+    def __init__(self, base_output_directory: Path, checkpoint_data: Dict[str, Any], report_config: Optional[Dict[str, Any]] = None, log_manager: Optional[LogManager] = None):
         """
         Initializes the ResultsCollector.
 
@@ -91,6 +98,7 @@ class ResultsCollector:
             base_output_directory: The root directory where all pipeline outputs are stored.
             checkpoint_data: Dictionary containing the status of each processed sample.
             report_config: Dictionary to customize report generation (optional).
+            log_manager: LogManager instance for logging metrics (optional).
         """
         # self.main_config = main_config # Removed main_config
         self.checkpoint_data = checkpoint_data
@@ -98,6 +106,7 @@ class ResultsCollector:
         self.base_output_directory = Path(base_output_directory) # Ensure it's a Path object
         self.jinja_env = self._setup_jinja_env() # Setup Jinja2 environment
         self.report_config = self._process_report_config(report_config) # Process and store config
+        self.log_manager = log_manager  # Store LogManager instance
         logger.info(f"ResultsCollector initialized. Output Dir: {self.base_output_directory}. Report Config: {self.report_config}")
 
     def _process_report_config(self, user_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -244,7 +253,7 @@ class ResultsCollector:
         """
         logger.info(f"Aggregating results for {len(completed_samples)} samples...")
         # Store collected metrics per sample and paths to main output files
-        all_results = {"metrics": {}, "prediction_files": {}, "training_logs": {}} 
+        all_results = {"metrics": {}, "prediction_files": {}, "training_logs": {}}
 
         for sample_id in completed_samples:
             # --- Use base_output_directory ---
@@ -262,8 +271,23 @@ class ResultsCollector:
                         # Add sample_id to each metric dict for easier DataFrame creation later
                         metric_dict = json.load(f)
                         metric_dict['sample_id'] = sample_id # Add sample identifier
+                        
+                        # Calculate derived metrics
+                        derived_metrics = calculate_derived_metrics(metric_dict)
+                        metric_dict['derived_metrics'] = derived_metrics
+                        
+                        # Calculate performance score
+                        perf_score = calculate_performance_score(metric_dict)
+                        if perf_score is not None:
+                            metric_dict['performance_score'] = perf_score
+                        
                         all_results["metrics"][sample_id] = metric_dict 
                         logger.debug(f"Loaded metrics for {sample_id} from {metrics_file}")
+                        
+                        # Log metrics to LogManager if available
+                        if self.log_manager and hasattr(self.log_manager, 'current_log'):
+                            self._log_sample_metrics(sample_id, metric_dict)
+                            
                 except (IOError, json.JSONDecodeError) as e:
                     logger.warning(f"Failed to load or parse metrics file {metrics_file} for sample {sample_id}: {e}")
                     all_results["metrics"][sample_id] = {"error": "failed_to_load", "path": str(metrics_file), "sample_id": sample_id}
@@ -289,6 +313,10 @@ class ResultsCollector:
         # Consolidate metrics into a single JSON file (useful for debugging/manual analysis)
         summary_dir = self.base_output_directory / "summary_reports" 
         self._save_consolidated_metrics(all_results.get("metrics", {}), summary_dir)
+        
+        # Calculate and log aggregate metrics if LogManager is available
+        if self.log_manager and all_results.get("metrics"):
+            self._log_aggregate_metrics(all_results.get("metrics", {}))
 
         logger.info("Finished aggregating results.")
         return all_results
@@ -890,6 +918,145 @@ class ResultsCollector:
             logger.info(f"Saved run status summary to {summary_file}")
         except IOError as e:
             logger.error(f"Failed to save run status summary: {e}")
+
+    def _log_sample_metrics(self, sample_id: str, metrics: Dict[str, Any]):
+        """
+        Log individual sample metrics to the LogManager.
+        
+        Args:
+            sample_id: Identifier for the sample
+            metrics: Dictionary of metrics for the sample
+        """
+        if not self.log_manager or not hasattr(self.log_manager, 'current_log'):
+            return
+            
+        try:
+            # Ensure performance_metrics exists in the log
+            if 'performance_metrics' not in self.log_manager.current_log:
+                self.log_manager.current_log['performance_metrics'] = {
+                    'mse': None,
+                    'r_squared': None,
+                    'mae': None,
+                    'correlations': {},
+                    'additional_metrics': {}
+                }
+            
+            # Store sample-specific metrics
+            if 'sample_metrics' not in self.log_manager.current_log['performance_metrics']:
+                self.log_manager.current_log['performance_metrics']['sample_metrics'] = {}
+            
+            # Map metrics to standard names and store
+            sample_metrics = {
+                'mse': metrics.get('mse'),
+                'r_squared': metrics.get('r2', metrics.get('r_squared')),
+                'mae': metrics.get('mae'),
+                'pearson_r': metrics.get('pearson_r'),
+                'pearson_p': metrics.get('pearson_p'),
+                'spearman_r': metrics.get('spearman_r'),
+                'spearman_p': metrics.get('spearman_p'),
+                'performance_score': metrics.get('performance_score'),
+                'derived_metrics': metrics.get('derived_metrics', {})
+            }
+            
+            # Remove None values
+            sample_metrics = {k: v for k, v in sample_metrics.items() if v is not None}
+            
+            self.log_manager.current_log['performance_metrics']['sample_metrics'][sample_id] = sample_metrics
+            logger.debug(f"Logged metrics for sample {sample_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to log sample metrics for {sample_id}: {e}")
+
+    def _log_aggregate_metrics(self, all_metrics: Dict[str, Any]):
+        """
+        Calculate and log aggregate metrics across all samples.
+        
+        Args:
+            all_metrics: Dictionary containing metrics for all samples
+        """
+        if not self.log_manager or not hasattr(self.log_manager, 'current_log'):
+            return
+            
+        try:
+            # Filter out error entries
+            valid_metrics = [
+                m for m in all_metrics.values() 
+                if isinstance(m, dict) and "error" not in m
+            ]
+            
+            if not valid_metrics:
+                logger.warning("No valid metrics to aggregate for logging")
+                return
+            
+            # Use advanced aggregation function
+            advanced_stats = aggregate_sample_metrics(valid_metrics)
+            
+            # Update main performance metrics with aggregates
+            perf_metrics = self.log_manager.current_log.get('performance_metrics', {})
+            
+            # Set primary metrics from means
+            if 'mse' in advanced_stats:
+                perf_metrics['mse'] = advanced_stats['mse']['mean']
+            if 'r2' in advanced_stats:
+                perf_metrics['r_squared'] = advanced_stats['r2']['mean']
+            if 'mae' in advanced_stats:
+                perf_metrics['mae'] = advanced_stats['mae']['mean']
+            
+            # Store correlations
+            if 'correlations' not in perf_metrics:
+                perf_metrics['correlations'] = {}
+                
+            if 'pearson_r' in advanced_stats:
+                perf_metrics['correlations']['pearson'] = {
+                    'r': advanced_stats['pearson_r']['mean'],
+                    'stats': advanced_stats['pearson_r']
+                }
+            if 'spearman_r' in advanced_stats:
+                perf_metrics['correlations']['spearman'] = {
+                    'r': advanced_stats['spearman_r']['mean'], 
+                    'stats': advanced_stats['spearman_r']
+                }
+            
+            # Store all aggregate statistics including advanced stats
+            perf_metrics['aggregate_statistics'] = advanced_stats
+            perf_metrics['num_samples'] = len(valid_metrics)
+            
+            # Calculate overall performance score if available
+            if 'performance_score' in advanced_stats:
+                perf_metrics['overall_performance_score'] = advanced_stats['performance_score']['mean']
+            
+            # Add derived metrics summary
+            derived_summary = {}
+            for metric in valid_metrics:
+                if 'derived_metrics' in metric:
+                    for key, value in metric['derived_metrics'].items():
+                        if key not in derived_summary:
+                            derived_summary[key] = []
+                        derived_summary[key].append(value)
+            
+            # Summarize derived metrics
+            if derived_summary:
+                perf_metrics['derived_metrics_summary'] = {}
+                for key, values in derived_summary.items():
+                    if all(isinstance(v, str) for v in values):
+                        # For categorical derived metrics, count occurrences
+                        from collections import Counter
+                        counts = Counter(values)
+                        perf_metrics['derived_metrics_summary'][key] = dict(counts)
+                    else:
+                        # For numeric derived metrics, calculate stats
+                        numeric_values = [v for v in values if isinstance(v, (int, float))]
+                        if numeric_values:
+                            perf_metrics['derived_metrics_summary'][key] = {
+                                'mean': float(np.mean(numeric_values)),
+                                'std': float(np.std(numeric_values))
+                            }
+            
+            self.log_manager.current_log['performance_metrics'] = perf_metrics
+            logger.info("Logged aggregate performance metrics with advanced statistics")
+            
+        except Exception as e:
+            logger.error(f"Failed to log aggregate metrics: {e}")
 
 
 # Example usage (called potentially from a main script or after pipeline execution)

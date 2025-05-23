@@ -7,12 +7,15 @@ import yaml
 import tempfile
 import os
 import sys
+from datetime import datetime
 
 # --- Remove unused imports ---
 # from epibench.validation.config_validator import validate_process_config, ProcessConfig
 # from pydantic import ValidationError
 # --- Add Import ---
 from epibench.pipeline.results_collector import ResultsCollector
+from epibench.logging.log_manager import LogManager
+from epibench.logging.config_aggregator import ConfigurationAggregator
 
 logger = logging.getLogger(__name__) # Get logger instance
 
@@ -23,17 +26,31 @@ class PipelineExecutor:
     directory and checkpoint file path.
     """
 
-    def __init__(self, base_output_directory: Path, checkpoint_file: Path = Path('pipeline_checkpoint.json')):
+    def __init__(self, base_output_directory: Path, checkpoint_file: Path = Path('pipeline_checkpoint.json'), 
+                 log_directory: Optional[Path] = None):
         """
         Initializes the PipelineExecutor.
 
         Args:
             base_output_directory: The root directory where all outputs (per-sample subdirs, logs) will be stored.
             checkpoint_file: Path to the file used for saving and loading execution progress.
+            log_directory: Directory for storing execution logs. If None, uses base_output_directory/logs
         """
         self.base_output_directory = Path(base_output_directory) # Ensure it's a Path object
         self.checkpoint_file = Path(checkpoint_file) # Ensure it's a Path object
         self.checkpoint_data = self._load_checkpoint()
+        
+        # Initialize logging directory
+        if log_directory is None:
+            self.log_directory = self.base_output_directory / "logs"
+        else:
+            self.log_directory = Path(log_directory)
+        
+        # Initialize LogManager
+        self.log_manager = LogManager(self.log_directory)
+        
+        # Initialize ConfigurationAggregator
+        self.config_aggregator = ConfigurationAggregator()
 
         # --- Simplified Logging Setup ---
         self._setup_logging()
@@ -159,29 +176,87 @@ class PipelineExecutor:
             logger.info("Pipeline execution run finished (no new samples processed).")
             return
 
-        logger.info(f"Will process {len(samples_to_process_this_run)} samples in this batch.")
+        # Process each sample individually with logging
+        for idx, sample_config in enumerate(samples_to_process_this_run):
+            sample_id = sample_config['name']
+            logger.info(f"Processing sample {idx + 1}/{len(samples_to_process_this_run)}: {sample_id}")
+            
+            # Initialize log for this sample
+            execution_id = self.log_manager.create_log(sample_id, self.base_output_directory)
+            
+            # Update log with configuration files
+            config_files = {}
+            if 'process_data_config' in sample_config:
+                config_files['process_config'] = sample_config['process_data_config']
+            if 'train_config' in sample_config:
+                config_files['train_config'] = sample_config['train_config']
+            
+            self.log_manager.update_log({
+                "input_configuration": {
+                    "config_files": config_files
+                },
+                "pipeline_information": {
+                    "checkpoint_data": self.checkpoint_data.get(sample_id, {})
+                }
+            })
+            
+            # Process single sample
+            success = self._process_single_sample(sample_config, sample_id, execution_id)
+            
+            # Update checkpoint
+            final_status = 'completed' if success else 'failed'
+            if sample_id not in self.checkpoint_data:
+                self.checkpoint_data[sample_id] = {}
+            self.checkpoint_data[sample_id]['status'] = final_status
+            self.checkpoint_data[sample_id]['execution_id'] = execution_id
+            self.checkpoint_data[sample_id]['timestamp'] = datetime.now().isoformat()
+            self._save_checkpoint()
+            
+            # Finalize log
+            if success:
+                self.log_manager.finalize_log(status="completed")
+            else:
+                self.log_manager.finalize_log(status="failed", error_info={
+                    "error_type": "PipelineExecutionError",
+                    "error_message": f"Pipeline failed for sample {sample_id}"
+                })
 
-        # --- Prepare and Run the Subprocess --- 
+        # --- Collect Results After Pipeline Run ---
+        self._collect_results() # Call helper method
+
+        logger.info("Pipeline execution run finished.")
+
+    def _process_single_sample(self, sample_config: Dict[str, Any], sample_id: str, execution_id: str) -> bool:
+        """
+        Process a single sample through the pipeline with logging.
+        
+        Args:
+            sample_config: Configuration for the sample
+            sample_id: Sample identifier
+            execution_id: Execution ID for logging
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        # Create a temporary YAML file for this sample
         success = False
-        # Use a temporary file for the samples config
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp_yaml:
             temp_yaml_path = Path(tmp_yaml.name)
             try:
-                yaml.dump(samples_to_process_this_run, tmp_yaml, default_flow_style=False)
-                logger.info(f"Generated temporary samples config: {temp_yaml_path}")
+                yaml.dump([sample_config], tmp_yaml, default_flow_style=False)
+                logger.info(f"Generated temporary sample config for {sample_id}: {temp_yaml_path}")
                 
                 # Ensure temp file is flushed and closed before subprocess reads it
                 tmp_yaml.flush()
                 os.fsync(tmp_yaml.fileno())
                 tmp_yaml.close() # Close here, subprocess needs to read it
 
-                # --- Use self.base_output_directory ---
-                # base_output_dir = self.config.output_directory
-                # if not base_output_dir:
-                #      logger.error("Base output directory not defined in the main configuration.")
-                #      return # Cannot proceed without output dir
                 base_output_dir = self.base_output_directory # Use the stored path
 
+                # Initialize pipeline stage tracking
+                pipeline_stages = []
+                stage_start_time = datetime.now()
+                
                 command = [
                     sys.executable, # Use the same python interpreter
                     str(Path("scripts/run_full_pipeline.py")), # Ensure path is correct
@@ -190,63 +265,153 @@ class PipelineExecutor:
                     '--max-workers', '1' # Run sequentially within the script as executor manages batch
                      # Add other necessary global arguments if run_full_pipeline.py supports them
                 ]
-                logger.info(f"Executing pipeline script: {' '.join(command)}")
+                logger.info(f"Executing pipeline script for {sample_id}: {' '.join(command)}")
 
-                # Execute the main pipeline script ONCE for the batch
+                # Log pipeline stage start
+                self.log_manager.update_log({
+                    "pipeline_information": {
+                        "pipeline_stages": [{
+                            "name": "full_pipeline",
+                            "status": "running",
+                            "start_time": stage_start_time.isoformat(),
+                            "end_time": None,
+                            "duration_seconds": None,
+                            "error_message": None
+                        }]
+                    }
+                })
+
+                # Execute the main pipeline script for this sample
                 result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
 
-                logger.info(f"Pipeline script completed successfully for the batch.")
+                # Log successful completion
+                stage_end_time = datetime.now()
+                duration = (stage_end_time - stage_start_time).total_seconds()
+                
+                self.log_manager.update_log({
+                    "pipeline_information": {
+                        "pipeline_stages": [{
+                            "name": "full_pipeline",
+                            "status": "completed",
+                            "start_time": stage_start_time.isoformat(),
+                            "end_time": stage_end_time.isoformat(),
+                            "duration_seconds": duration,
+                            "error_message": None
+                        }]
+                    }
+                }, immediate_save=True)
+
+                logger.info(f"Pipeline script completed successfully for sample {sample_id}.")
                 logger.debug(f"Subprocess stdout:\n{result.stdout}")
                 if result.stderr:
                     logger.warning(f"Subprocess stderr:\n{result.stderr}")
                 success = True
+                
+                # After successful pipeline execution, aggregate configuration parameters
+                self._aggregate_and_log_configs(sample_id)
 
             except FileNotFoundError:
-                logger.error(f"Error: The script 'scripts/run_full_pipeline.py' was not found.")
+                error_msg = f"Error: The script 'scripts/run_full_pipeline.py' was not found."
+                logger.error(error_msg)
+                self._log_pipeline_error("full_pipeline", stage_start_time, "FileNotFoundError", error_msg)
                 success = False
             except subprocess.CalledProcessError as e:
-                logger.error(f"Pipeline script failed for the batch with exit code {e.returncode}")
+                error_msg = f"Pipeline script failed for sample {sample_id} with exit code {e.returncode}"
+                logger.error(error_msg)
                 logger.error(f"Stderr:\n{e.stderr}")
                 logger.error(f"Stdout:\n{e.stdout}")
+                self._log_pipeline_error("full_pipeline", stage_start_time, "CalledProcessError", 
+                                       f"{error_msg}\nStderr: {e.stderr}")
                 success = False
             except Exception as e:
-                logger.exception(f"An unexpected error occurred while executing the pipeline script: {e}")
+                error_msg = f"An unexpected error occurred while executing the pipeline script: {e}"
+                logger.exception(error_msg)
+                self._log_pipeline_error("full_pipeline", stage_start_time, type(e).__name__, str(e))
                 success = False
             finally:
                 # Clean up the temporary file
                 if temp_yaml_path.exists():
                     try:
                         temp_yaml_path.unlink()
-                        logger.info(f"Removed temporary samples config: {temp_yaml_path}")
+                        logger.info(f"Removed temporary sample config: {temp_yaml_path}")
                     except OSError as e:
                         logger.error(f"Error removing temporary file {temp_yaml_path}: {e}")
+        
+        return success
 
-        # --- Update Checkpoints for the Batch --- 
-        final_status = 'completed' if success else 'failed'
-        logger.info(f"Updating checkpoints for {len(pending_or_failed_ids)} processed/attempted samples with status: {final_status}")
-        for sample_id in pending_or_failed_ids:
-            if sample_id not in self.checkpoint_data:
-                self.checkpoint_data[sample_id] = {}
-            self.checkpoint_data[sample_id]['status'] = final_status
-            # Optionally add a timestamp or error details here
-        self._save_checkpoint()
+    def _aggregate_and_log_configs(self, sample_id: str):
+        """
+        Aggregate configuration parameters from temp_configs and add to log.
+        
+        Args:
+            sample_id: Sample identifier
+        """
+        try:
+            sample_output_dir = self.base_output_directory / sample_id
+            logger.info(f"Aggregating configurations for sample {sample_id} from {sample_output_dir}")
+            
+            # Aggregate configurations
+            config_data = self.config_aggregator.aggregate_configs(sample_output_dir)
+            
+            # Extract key parameters
+            if config_data.get("effective_config"):
+                key_params = self.config_aggregator.extract_key_parameters(config_data["effective_config"])
+                config_data["key_parameters"] = key_params
+            
+            # Update log with configuration parameters
+            self.log_manager.update_log({
+                "configuration_parameters": config_data,
+                "output_information": {
+                    "output_paths": {
+                        "temp_configs": str(sample_output_dir / "temp_configs")
+                    }
+                }
+            }, immediate_save=True)
+            
+            logger.info(f"Successfully aggregated {len(config_data.get('config_files_found', []))} configuration files")
+            
+        except Exception as e:
+            logger.error(f"Failed to aggregate configurations for sample {sample_id}: {e}")
+            # Log the error but don't fail the pipeline
+            self.log_manager.update_log({
+                "configuration_parameters": {
+                    "error": f"Failed to aggregate configurations: {str(e)}"
+                }
+            })
 
-        total_processed = len(pending_or_failed_ids)
-        failed_count = 0 if success else total_processed
-        logger.info("Pipeline batch run finished.")
-        logger.info(f"Summary for this run: Samples Processed={total_processed}, Failed={failed_count}, Skipped Previously={skipped_count}")
-
-        # --- Collect Results After Pipeline Run Attempt ---
-        self._collect_results() # Call helper method
-
-        logger.info("Pipeline execution run finished.")
+    def _log_pipeline_error(self, stage_name: str, start_time: datetime, error_type: str, error_message: str):
+        """Helper method to log pipeline stage errors."""
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        self.log_manager.update_log({
+            "pipeline_information": {
+                "pipeline_stages": [{
+                    "name": stage_name,
+                    "status": "failed",
+                    "start_time": start_time.isoformat(),
+                    "end_time": end_time.isoformat(),
+                    "duration_seconds": duration,
+                    "error_message": error_message
+                }]
+            },
+            "error_information": {
+                "error_type": error_type,
+                "error_message": error_message,
+                "failed_stage": stage_name
+            }
+        }, immediate_save=True)
 
     def _collect_results(self):
         """Helper method to instantiate and run the ResultsCollector."""
         logger.info("Attempting to collect results for all samples...")
         try:
             # --- Pass self.base_output_directory to ResultsCollector ---
-            collector = ResultsCollector(self.base_output_directory, self.checkpoint_data)
+            collector = ResultsCollector(
+                self.base_output_directory, 
+                self.checkpoint_data,
+                log_manager=self.log_manager  # Pass LogManager instance
+            )
             all_results = collector.collect_all() # collect_all likely returns None now or a summary dict
 
             # --- Adjust saving logic ---
