@@ -37,3 +37,6 @@ jsonschema>=4.0.0
 # Development & Testing
 pytest>=7.0.0
 tabulate>=0.8.9
+
+# Added from the code block
+rich>=12.0.0
