@@ -107,11 +107,12 @@ hpo:
   # Define the hyperparameter search space.
   # Syntax: param_name: [min, max] for float/int, or [choice1, choice2] for categorical.
   search_space:
-    training.optimizer_params.lr: ["log:0.0001:0.005"]
-    training.optimizer_params.weight_decay: ["log:1e-6:1e-4"]
-    model.params.num_filters: ["int:16:64:16"]
-    model.params.fc_units.0: ["int:16:64:16"]
-    model.params.dropout_rate: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+    training.optimizer_params.lr: [0.0001, 0.01]
+    training.optimizer_params.weight_decay: [0.000001, 0.001]  # Changed from [1e-6, 1e-3] to explicit decimal
+    model.params.num_filters: [16, 128]
+    model.params.fc_units.0: [64, 512]
+    model.params.fc_units.1: [64, 512]
+    model.params.dropout_rate: [0.2, 0.7]
     model.params.use_batch_norm: [true, false]
     # model.params.num_filters: ["int", 16, 64, 16] # Example if num_filters was tuned
     # Add other parameters like cnn_filters, kernel_sizes if desired 

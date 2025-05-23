@@ -16,7 +16,7 @@ class SeqCNNRegressor(nn.Module):
                  input_channels: int = 11,
                  num_filters: int = 64,
                  kernel_sizes: List[int] = [3, 9, 25, 51],
-                 fc_units: int = 128,
+                 fc_units: Optional[List[int]] = None,
                  dropout_rate: float = 0.5,
                  use_batch_norm: bool = True,
                  activation: str = 'relu'):
@@ -44,7 +44,13 @@ class SeqCNNRegressor(nn.Module):
         self.use_batch_norm = use_batch_norm
         self.input_channels = input_channels
         self.num_filters = num_filters
-        self.fc_units = fc_units
+        # Support both int and list for backward compatibility
+        if fc_units is None:
+            self.fc_units = [128]
+        elif isinstance(fc_units, int):
+            self.fc_units = [fc_units]
+        else:
+            self.fc_units = fc_units
         self.dropout_rate = dropout_rate
 
         # 1. Convolutional branches
@@ -84,10 +90,16 @@ class SeqCNNRegressor(nn.Module):
                                kernel_size=3, padding=1)
         self.bn4 = nn.BatchNorm1d(total_channels * 4) if self.use_batch_norm else nn.Identity()
 
-        # 5. Fully connected layers
-        self.fc1 = nn.Linear(total_channels * 4, self.fc_units)
-        self.dropout = nn.Dropout(self.dropout_rate)
-        self.fc2 = nn.Linear(self.fc_units, 1)
+        # 5. Fully connected layers (support multiple layers)
+        fc_layers = []
+        in_features = total_channels * 4
+        for units in self.fc_units:
+            fc_layers.append(nn.Linear(in_features, units))
+            fc_layers.append(nn.Dropout(self.dropout_rate))
+            in_features = units
+        # Output layer
+        fc_layers.append(nn.Linear(in_features, 1))
+        self.fc_layers = nn.ModuleList(fc_layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Defines the forward pass of the model (reference-style).
@@ -134,11 +146,15 @@ class SeqCNNRegressor(nn.Module):
         # Global average pooling across the sequence dimension
         x = x.mean(dim=2)  # (batch, channels)
 
-        # Fully connected
-        x = self.fc1(x)
-        x = self.activation_fn(x)
-        x = self.dropout(x)
-        x = self.fc2(x)
+        # Fully connected layers
+        for i, layer in enumerate(self.fc_layers):
+            if isinstance(layer, nn.Linear):
+                x = layer(x)
+                # Only apply activation except for the last layer
+                if i < len(self.fc_layers) - 1:
+                    x = self.activation_fn(x)
+            elif isinstance(layer, nn.Dropout):
+                x = layer(x)
         x = torch.sigmoid(x)
         return x
 

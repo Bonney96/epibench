@@ -204,79 +204,85 @@ class HPOptimizer:
         suggested_params = {}
         for param_key, config_val in hpo_search_config.items():
             # param_key is like "training.optimizer_params.lr" or "model.params.dropout_rate"
-            if not isinstance(config_val, list) or len(config_val) < 1:
+            if not isinstance(config_val, list) or len(config_val) < 2:  # Need at least min and max
                 logger.warning(f"Skipping invalid search space config for '{param_key}': {config_val}")
                 continue
 
-            param_type = "float" # Default
+            param_type = "float"  # Default
             is_log = False
             step = None
             
-            # Check for explicit type hint if present (e.g., "int:0.1:0.5" or "log:0.001:0.01")
-            # Or determine by type of values in the list
-            
-            if isinstance(config_val[0], str) and ':' in config_val[0]: # e.g. "log:0.0001:0.01" or "int:16:128:16"
+            # Check for explicit type hint if present
+            if isinstance(config_val[0], str) and ':' in config_val[0]:
                 parts = config_val[0].split(':')
                 hint = parts[0].lower()
                 if hint == "log":
                     is_log = True
-                    param_type = "float" # log is for float
+                    param_type = "float"
                     values = [float(p) for p in parts[1:]]
                 elif hint == "int":
                     param_type = "int"
                     values = [int(p) for p in parts[1:]]
-                    if len(values) == 3: # min, max, step
+                    if len(values) == 3:  # min, max, step
                         step = values[2]
-                        values = values[:2] # keep only min, max
-                elif hint == "cat": # categorical
-                     param_type = "categorical"
-                     values = parts[1:] # The rest are choices
-                else: # Assume it's a type like "float" or "str"
+                        values = values[:2]  # keep only min, max
+                elif hint == "cat":
+                    param_type = "categorical"
+                    values = parts[1:]  # The rest are choices
+                else:
                     param_type = hint
                     values = config_val[1:] if len(config_val) > 1 else []
-
-
-            elif isinstance(config_val[0], float) or (isinstance(config_val[0], int) and any(isinstance(v, float) for v in config_val)):
-                param_type = "float"
-                values = [float(v) for v in config_val]
-            elif all(isinstance(v, int) for v in config_val):
-                param_type = "int"
-                values = [int(v) for v in config_val]
-            elif all(isinstance(v, str) for v in config_val):
-                param_type = "categorical"
-                values = config_val # Use as is
-            else: # Default to float if mixed or unknown type
-                param_type = "float"
-                try:
-                    values = [float(v) for v in config_val]
-                except ValueError:
-                    logger.warning(f"Could not parse values for '{param_key}' as float: {config_val}. Skipping.")
-                    continue
-            
-            # Suggest value based on type
-            if param_type == "float":
-                if len(values) == 2:
-                    suggested_params[param_key] = trial.suggest_float(param_key, values[0], values[1], log=is_log)
-                elif len(values) == 3 and not is_log: # min, max, step (log does not support step)
-                    suggested_params[param_key] = trial.suggest_float(param_key, values[0], values[1], step=values[2])
-                else:
-                    logger.warning(f"Float param '{param_key}' needs 2 (min,max) or 3 (min,max,step) values. Got: {values}. Skipping.")
-            elif param_type == "int":
-                if len(values) == 2:
-                    suggested_params[param_key] = trial.suggest_int(param_key, values[0], values[1], step=step if step else 1)
-                elif len(values) == 3 and step: # step was parsed from hint
-                     suggested_params[param_key] = trial.suggest_int(param_key, values[0], values[1], step=step)
-                else: # min, max, step
-                     suggested_params[param_key] = trial.suggest_int(param_key, values[0], values[1], step=values[2] if len(values) == 3 else 1)
-
-            elif param_type == "categorical":
-                if values:
-                    suggested_params[param_key] = trial.suggest_categorical(param_key, values)
-                else:
-                    logger.warning(f"Categorical param '{param_key}' needs choices. Got empty list. Skipping.")
             else:
-                logger.warning(f"Unsupported param type for '{param_key}': {param_type}. Skipping.")
-        
+                # Determine type from values
+                if all(isinstance(v, int) for v in config_val):
+                    param_type = "int"
+                    values = [int(v) for v in config_val]
+                elif all(isinstance(v, float) for v in config_val):
+                    param_type = "float"
+                    values = [float(v) for v in config_val]
+                elif all(isinstance(v, str) for v in config_val):
+                    param_type = "categorical"
+                    values = config_val
+                else:
+                    param_type = "float"
+                    try:
+                        values = [float(v) for v in config_val]
+                    except ValueError:
+                        logger.warning(f"Could not parse values for '{param_key}' as float: {config_val}. Skipping.")
+                        continue
+
+            # Ensure min <= max for numeric parameters
+            if param_type in ["int", "float"] and len(values) >= 2:
+                min_val, max_val = values[0], values[1]
+                if min_val > max_val:
+                    logger.warning(f"Swapping min/max values for '{param_key}' as min > max: {min_val} > {max_val}")
+                    values[0], values[1] = max_val, min_val
+
+            # Suggest value based on type
+            try:
+                if param_type == "float":
+                    if len(values) == 2:
+                        suggested_params[param_key] = trial.suggest_float(param_key, values[0], values[1], log=is_log)
+                    elif len(values) == 3 and not is_log:
+                        suggested_params[param_key] = trial.suggest_float(param_key, values[0], values[1], step=values[2])
+                    else:
+                        logger.warning(f"Float param '{param_key}' needs 2 (min,max) or 3 (min,max,step) values. Got: {values}. Skipping.")
+                elif param_type == "int":
+                    if len(values) >= 2:
+                        suggested_params[param_key] = trial.suggest_int(param_key, values[0], values[1], step=step if step else 1)
+                    else:
+                        logger.warning(f"Int param '{param_key}' needs at least 2 values (min,max). Got: {values}. Skipping.")
+                elif param_type == "categorical":
+                    if values:
+                        suggested_params[param_key] = trial.suggest_categorical(param_key, values)
+                    else:
+                        logger.warning(f"Categorical param '{param_key}' needs choices. Got empty list. Skipping.")
+                else:
+                    logger.warning(f"Unsupported param type for '{param_key}': {param_type}. Skipping.")
+            except Exception as e:
+                logger.error(f"Error suggesting value for '{param_key}': {e}")
+                continue
+
         logger.debug(f"Trial {trial.number}: Suggested HPO parameters (flat keys): {suggested_params}")
         return suggested_params
 
