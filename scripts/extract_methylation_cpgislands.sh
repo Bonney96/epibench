@@ -39,13 +39,19 @@ for SAMPLE in "${!SAMPLE_PATHS[@]}"; do
   fi
 
   OUTFILE="$SAMPLE_OUTDIR/${SAMPLE}_cpgislands_methylation.tsv"
-  CMD="/storage2/fs1/dspencer/Active/spencerlab/abonney/methfast/methfast $SAMPLE_BED $CPG_ISLANDS_BED $METHFAST_PARAMS > $OUTFILE"
+  
+  # Log the command structure as it will be effectively run
+  LOGGED_CMD_STR="/storage2/fs1/dspencer/Active/spencerlab/abonney/methfast/methfast \\"$SAMPLE_BED\\" \\"$CPG_ISLANDS_BED\\" $METHFAST_PARAMS > \\"$OUTFILE\\""
+  echo "[$(date)] Running: $LOGGED_CMD_STR" | tee -a "$LOG_FILE"
 
-  echo "[$(date)] Running: $CMD" | tee -a "$LOG_FILE"
-  if $CMD >> "$LOG_FILE" 2>&1; then
+  # Execute the command:
+  # methfast's standard output goes to $OUTFILE
+  # methfast's standard error is appended to $LOG_FILE
+  if /storage2/fs1/dspencer/Active/spencerlab/abonney/methfast/methfast "$SAMPLE_BED" "$CPG_ISLANDS_BED" $METHFAST_PARAMS > "$OUTFILE" 2>> "$LOG_FILE"; then
     echo "[$(date)] SUCCESS: $SAMPLE extraction complete." | tee -a "$LOG_FILE"
   else
-    echo "[$(date)] ERROR: Methfast failed for $SAMPLE" | tee -a "$LOG_FILE"
+    # The specific error from methfast should now be in $LOG_FILE
+    echo "[$(date)] ERROR: Methfast failed for $SAMPLE. See $LOG_FILE for details from methfast itself." | tee -a "$LOG_FILE"
   fi
 done
 
