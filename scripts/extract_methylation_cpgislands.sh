@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # --- User-editable paths ---
-CPG_ISLANDS_BED="/storage1/fs1/dspencer/Active/spencerlab/abonney/CpG_islands/hg38_cpgislands_filtered.bed"
+CPG_ISLANDS_BED="/storage1/fs1/dspencer/Active/spencerlab/abonney/CpG_islands/cpgislands.bed"
 DATA_DIR="/storage2/fs1/dspencer/Active/spencerlab/data/wgbs"
 OUT_DIR="/storage2/fs1/dspencer/Active/spencerlab/abonney/epibench/methylation_extracted"
 LOG_FILE="methfast_extraction.log"
