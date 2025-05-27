@@ -32,7 +32,7 @@ echo "EpiBench help:"
 epibench --help
 
 echo "Processing data for AML_263578..."
-epibench process-data --config config/train_config_aml_263578.yaml -o processed_data/AML_263578_region_based
+epibench process-data --config config/train_config_aml_263578.yaml --output-dir processed_data/AML_263578_region_based
 
 echo "Starting EpiBench training for AML_263578..."
 epibench train --config config/train_config_aml_263578.yaml --output-dir output/training_run_AML_263578
