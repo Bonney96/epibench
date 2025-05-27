@@ -225,7 +225,7 @@ LOG_SCHEMA = {
                 "additional_metrics": {
                     "type": "object",
                     "description": "Additional model-specific metrics",
-                    "additionalProperties": true
+                    "additionalProperties": True
                 }
             }
         },
@@ -236,7 +236,7 @@ LOG_SCHEMA = {
                 "effective_config": {
                     "type": "object",
                     "description": "Merged configuration from all sources",
-                    "additionalProperties": true
+                    "additionalProperties": True
                 },
                 "temp_configs_content": {
                     "type": "object",
@@ -261,7 +261,7 @@ LOG_SCHEMA = {
         "custom_metadata": {
             "type": ["object", "null"],
             "description": "Additional custom metadata",
-            "additionalProperties": true
+            "additionalProperties": True
         }
     }
 }
