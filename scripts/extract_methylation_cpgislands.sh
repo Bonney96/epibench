@@ -18,7 +18,7 @@ declare -A SAMPLE_PATHS=(
 )
 
 # --- Methfast parameters ---
-METHFAST_PARAMS="-f 4 -c 5 -m 6 -u 7"
+METHFAST_PARAMS="-f 4 -c 5"
 
 # --- Create output and log directories ---
 mkdir -p "$OUT_DIR"
