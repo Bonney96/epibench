@@ -97,12 +97,16 @@ def setup_interpret_parser(parser: argparse.ArgumentParser):
 
 def interpret_main(args):
     """Main function for the interpret command."""
+    # Basic logging setup for early errors, will be overridden by config if successful
+    logging.basicConfig(level="INFO", format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__) # Initialize logger early
+
     # --- Load and Validate Interpretation Config (using new validator) ---
     config: Optional[InterpretConfig] = None
     try:
         config = validate_interpret_config(args.config)
     except Exception as e:
-        logging.basicConfig(level="INFO", format='%(asctime)s - %(levelname)s - %(message)s') # Basic setup for early errors
+        # logger is now guaranteed to be defined
         logger.error(f"Error loading or validating configuration from {args.config}: {e}", exc_info=True)
         sys.exit(1)
 
