@@ -93,16 +93,25 @@ def plot_predictions_vs_actual(y_true: np.ndarray, y_pred: np.ndarray,
                                title: str = "Predicted vs. Actual Values", 
                                xlabel: str = "Actual Values", 
                                ylabel: str = "Predicted Values", 
-                               save_path: Optional[str] = None) -> None:
+                               save_path: Optional[str] = None,
+                               cd34_values: Optional[np.ndarray] = None,
+                               aml_predictions: Optional[np.ndarray] = None) -> None:
     """Generates a scatter plot of predicted vs. actual values.
+
+    Can apply color-coding based on provided baseline data or comparative predictions.
 
     Args:
         y_true: Array of true target values.
-        y_pred: Array of predicted values.
+        y_pred: Array of predicted values from the primary model (e.g., CD34-trained).
         title: Title for the plot.
         xlabel: Label for the x-axis.
         ylabel: Label for the y-axis.
         save_path: Optional path to save the plot image. If None, shows the plot.
+        cd34_values: Optional array of baseline CD34 methylation values. If provided,
+                     points will be colored red (>0.5) or blue (<=0.5).
+        aml_predictions: Optional array of predictions from a secondary model (e.g., AML-trained).
+                         If provided, points with a prediction difference > 0.3 will be
+                         highlighted. This is only used if cd34_values is None.
     """
     if not isinstance(y_true, np.ndarray) or not isinstance(y_pred, np.ndarray):
         logger.error("Inputs must be numpy arrays for plotting.")
@@ -111,21 +120,51 @@ def plot_predictions_vs_actual(y_true: np.ndarray, y_pred: np.ndarray,
         logger.error(f"Input shapes must match for plotting. Got {y_true.shape} and {y_pred.shape}.")
         return
 
-    plt.figure(figsize=(8, 8))
-    plt.scatter(y_true, y_pred, alpha=0.6, label="Data points")
+    plt.figure(figsize=(10, 8)) # Increased figure size for legend
     
+    handles = []
+    
+    # Determine coloring scheme
+    if cd34_values is not None and cd34_values.shape == y_true.shape:
+        logger.info("Applying color-coding based on CD34 baseline values.")
+        colors = np.where(cd34_values > 0.5, 'red', 'blue')
+        
+        # Plot points in two batches to create legend handles
+        red_mask = (colors == 'red')
+        blue_mask = (colors == 'blue')
+        
+        if np.any(red_mask):
+            plt.scatter(y_true[red_mask], y_pred[red_mask], color='red', alpha=0.6, label='CD34 Baseline > 0.5 (Hypermethylated)')
+        if np.any(blue_mask):
+            plt.scatter(y_true[blue_mask], y_pred[blue_mask], color='blue', alpha=0.6, label='CD34 Baseline <= 0.5 (Hypomethylated)')
+
+    elif aml_predictions is not None and aml_predictions.shape == y_pred.shape:
+        logger.info("Applying color-coding based on prediction difference (AML vs CD34).")
+        diff = np.abs(y_pred - aml_predictions)
+        changed_mask = diff > 0.3
+        
+        # Plot points in two batches for legend
+        plt.scatter(y_true[~changed_mask], y_pred[~changed_mask], color='grey', alpha=0.5, label='Prediction Change <= 0.3')
+        if np.any(changed_mask):
+            plt.scatter(y_true[changed_mask], y_pred[changed_mask], color='green', alpha=0.7, label='Prediction Change > 0.3')
+
+    else:
+        # Default behavior: no color-coding
+        plt.scatter(y_true, y_pred, alpha=0.6, label="Data points")
+
     # Add a line for perfect predictions (y=x)
     min_val = min(np.min(y_true), np.min(y_pred))
     max_val = max(np.max(y_true), np.max(y_pred))
-    plt.plot([min_val, max_val], [min_val, max_val], 'r--', label="Perfect prediction")
+    perfect_line, = plt.plot([min_val, max_val], [min_val, max_val], 'r--', label="Perfect prediction")
+    handles.append(perfect_line)
     
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.grid(True)
-    plt.legend()
+    plt.legend() # Let matplotlib handle the legend with labels from scatter plots
     plt.axis('equal') # Ensure aspect ratio is equal
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 0.95, 1]) # Adjust layout for legend
 
     if save_path:
         try:

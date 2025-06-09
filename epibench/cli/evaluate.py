@@ -10,6 +10,8 @@ import torch
 from torch.utils.data import DataLoader
 import numpy as np
 from tqdm import tqdm # For progress bar
+import h5py
+from typing import Optional
 
 # Add project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -73,6 +75,23 @@ def setup_evaluate_parser(parser: argparse.ArgumentParser):
         default=False,
         help="Disable generation of performance plots."
     )
+    # Arguments for color-coding plots
+    plot_color_group = parser.add_argument_group('Plot Color-Coding Options')
+    plot_color_group.add_argument(
+        "--color-cd34-baseline",
+        type=str,
+        default=None,
+        help="Path to an HDF5 file containing baseline CD34 ground truth values. "
+             "If provided, plots will color points based on these values (>0.5 red, <=0.5 blue)."
+    )
+    plot_color_group.add_argument(
+        "--color-aml-checkpoint",
+        type=str,
+        default=None,
+        help="Path to a model checkpoint (.pth) trained on AML data. "
+             "If provided, plots will highlight points where the prediction difference "
+             "between the main model and this AML model is > 0.3."
+    )
 
 def evaluate_main(args):
     """Main function for the evaluate command."""
@@ -101,6 +120,21 @@ def evaluate_main(args):
         else:
             # Return unchanged if not a numpy type or container we handle
             return obj
+
+    # --- Helper to load just y_true from HDF5 ---
+    def load_y_true_from_hdf5(filepath: str) -> Optional[np.ndarray]:
+        logger.info(f"Loading baseline ground truth data from {filepath} for plotting...")
+        try:
+            with h5py.File(filepath, 'r') as hf:
+                if 'y_true' not in hf:
+                    logger.error(f"'y_true' dataset not found in HDF5 file: {filepath}")
+                    return None
+                y_true = np.array(hf['y_true'])
+                logger.info(f"Successfully loaded {len(y_true)} baseline labels.")
+                return y_true
+        except Exception as e:
+            logger.error(f"Failed to load data from HDF5 file {filepath}: {e}", exc_info=True)
+            return None
 
     # --- Load Config (Subtask 10.2 - Already partially done) ---
     config_manager = None
@@ -173,6 +207,47 @@ def evaluate_main(args):
     except Exception as e:
         logger.error(f"Error loading model: {e}", exc_info=True)
         sys.exit(1)
+
+    # --- Load AML model for comparison if specified ---
+    aml_predictions = None
+    if args.color_aml_checkpoint:
+        logger.info("--- Loading secondary (AML) model for comparative plotting ---")
+        try:
+            # Instantiate a new model instance for the AML checkpoint
+            aml_model = ModelClass(**model_params)
+            aml_model, _, _, aml_checkpoint_info = Trainer.load_model(
+                checkpoint_path=args.color_aml_checkpoint,
+                model=aml_model,
+                device=device
+            )
+            logger.info(f"AML comparison model loaded successfully from epoch {aml_checkpoint_info.get('epoch', 'N/A')}.")
+            aml_model.eval()
+
+            # Generate predictions with the AML model
+            logger.info("Generating predictions with AML model for comparison...")
+            aml_preds_list = []
+            with torch.no_grad():
+                for batch in tqdm(test_loader, desc="AML Predicting"):
+                    if len(batch) == 3:
+                        inputs, _, _ = batch
+                    elif len(batch) == 2:
+                        inputs, _ = batch
+                    else:
+                        continue # Skip malformed batches
+                    
+                    inputs = inputs.to(device)
+                    outputs = aml_model(inputs)
+                    aml_preds_list.append(outputs.cpu().numpy())
+            
+            if aml_preds_list:
+                aml_predictions = np.concatenate(aml_preds_list)
+                logger.info("Finished generating AML predictions for plot comparison.")
+            else:
+                logger.warning("No predictions were generated from the AML model.")
+
+        except Exception as e:
+            logger.error(f"Failed to load or run AML comparison model from {args.color_aml_checkpoint}: {e}", exc_info=True)
+            # Continue without aml_predictions
 
     # --- Load Test Data (Subtask 10.3) ---
     test_loader = None
@@ -296,9 +371,23 @@ def evaluate_main(args):
         plot_pred_path = os.path.join(args.output_dir, "predictions_vs_actual.png")
         plot_resid_path = os.path.join(args.output_dir, "residuals.png")
         
+        # --- Prepare data for color-coded plots ---
+        cd34_baseline_values = None
+        if args.color_cd34_baseline:
+            cd34_baseline_values = load_y_true_from_hdf5(args.color_cd34_baseline)
+            if cd34_baseline_values is not None and cd34_baseline_values.shape != all_y_true.shape:
+                logger.warning(f"Shape mismatch between baseline CD34 data ({cd34_baseline_values.shape}) and current test data ({all_y_true.shape}). Disabling color-coding.")
+                cd34_baseline_values = None # Disable if shapes don't match
+        
         # Plotting functions should still use the original numpy arrays
         try:
-            plot_predictions_vs_actual(all_y_true, all_y_pred, save_path=plot_pred_path)
+            plot_predictions_vs_actual(
+                all_y_true, 
+                all_y_pred, 
+                save_path=plot_pred_path,
+                cd34_values=cd34_baseline_values, # Pass CD34 baseline values
+                aml_predictions=aml_predictions # Pass AML predictions
+            )
         except Exception as e:
             logger.error(f"Failed to generate/save predictions vs actual plot: {e}", exc_info=True)
             
