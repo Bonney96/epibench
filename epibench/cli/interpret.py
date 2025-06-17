@@ -263,14 +263,25 @@ def interpret_main(args):
     # --- Run Interpretation Loop (Subtask 28.4) ---
     all_attributions = []
     all_coordinates = [] # Store coordinates corresponding to attributions
+    all_predictions = []
+    all_actuals = []
     interpret_params = config.interpretation
     ig_params = interpret_params.integrated_gradients
 
     logger.info("Calculating Integrated Gradients attributions...")
     try:
         for batch_idx, batch in enumerate(tqdm(interpret_loader, desc="Calculating Attributions", total=len(interpret_loader))):
-             features, _, coordinates_batch = batch # HDF5Dataset now returns coordinates
+             features, targets, coordinates_batch = batch # HDF5Dataset now returns coordinates
              features = features.to(device)
+             targets = targets.to(device)
+
+             # Get model predictions
+             with torch.no_grad():
+                 predictions = model(features)
+             
+             # Store predictions and actuals
+             all_predictions.append(predictions.cpu().detach().numpy())
+             all_actuals.append(targets.cpu().detach().numpy())
 
              # --- Add Debug Logging ---
              if batch_idx == 0: # Log only for the first batch to avoid spam
@@ -334,6 +345,8 @@ def interpret_main(args):
     try:
         logger.info("Aggregating attribution results...")
         final_attributions = np.concatenate(all_attributions, axis=0)
+        final_predictions = np.concatenate(all_predictions, axis=0)
+        final_actuals = np.concatenate(all_actuals, axis=0)
         logger.info(f"Final aggregated attributions shape: {final_attributions.shape}")
         # Sanity check: Ensure coordinates match final attributions
         if len(all_coordinates) != final_attributions.shape[0]:
@@ -379,6 +392,8 @@ def interpret_main(args):
                  output_dir=output_dir,
                  filename_prefix=filename_prefix,
                  attributions=final_attributions,
+                 predictions=final_predictions,
+                 actuals=final_actuals,
                  coordinates=all_coordinates,
                  config=config # Pass full config if needed for plots
              )

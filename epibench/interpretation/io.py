@@ -251,6 +251,8 @@ def extract_and_save_features(output_dir: Union[str, Path],
 def generate_and_save_plots(output_dir: Union[str, Path],
                             filename_prefix: str,
                             attributions: np.ndarray,
+                            predictions: np.ndarray,
+                            actuals: np.ndarray,
                             coordinates: List[Dict[str, Any]],
                             config: Any): # Use actual InterpretConfig type hint if possible
     """Generates and saves visualization plots for attributions.
@@ -296,7 +298,7 @@ def generate_and_save_plots(output_dir: Union[str, Path],
     num_histone_channels_config = len(histone_channel_names_config)
     expected_total_channels = num_dna_channels + num_histone_channels_config + 1 # Including boundary channel
     num_channels_actual = attributions.shape[2]
-
+            
     dna_channel_names = ['A', 'C', 'G', 'T']
     
     # Determine the actual number of histone channels present in the data
@@ -329,6 +331,8 @@ def generate_and_save_plots(output_dir: Union[str, Path],
         # Select only DNA and Histone attribution channels for plotting
         sample_attributions_to_plot = attributions[i, :, :num_channels_to_plot_attr] # Shape: (seq_len, num_dna+num_histone_actual)
         sample_coords = coordinates[i]
+        pred_score = predictions[i]
+        true_score = actuals[i]
         chrom = sample_coords['chrom']
         start = sample_coords['start']
         end = sample_coords['end']
@@ -354,7 +358,7 @@ def generate_and_save_plots(output_dir: Union[str, Path],
             fig, axes = plt.subplots(3, 1, figsize=(15, 2 + 0.6 * num_channels_to_plot_attr + 0.6 * num_histone_channels_gt), 
                                      sharex=True, gridspec_kw={'height_ratios': height_ratios})
             
-            fig.suptitle(f"Feature Importance (Integrated Gradients) - Sample {i}\nRegion: {chrom}:{start}-{end}", fontsize=14)
+            fig.suptitle(f"Feature Importance - Sample {i}\nRegion: {chrom}:{start}-{end} | Actual: {true_score.item():.3f}, Predicted: {pred_score.item():.3f}", fontsize=14)
 
             # --- 1. Attribution Heatmap --- #
             ax1 = axes[0]
