@@ -12,6 +12,7 @@ from tqdm import tqdm
 from pathlib import Path
 import yaml
 from typing import Optional # Add Optional typing hint
+import h5py
 
 # Add project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -80,6 +81,12 @@ def setup_interpret_parser(parser: argparse.ArgumentParser):
         type=str,
         required=True,
         help="Directory to save all interpretation results (e.g., attributions.h5, plots, features.tsv)."
+    )
+    parser.add_argument(
+        "--secondary-predictions",
+        type=str,
+        required=False,
+        help="Path to an HDF5 file containing secondary model predictions for comparative analysis (e.g., from a baseline model)."
     )
     parser.add_argument(
         "--batch-size",
@@ -260,6 +267,29 @@ def interpret_main(args):
         logger.error(f"Error loading interpretation input data: {e}", exc_info=True)
         sys.exit(1)
 
+    # --- Load Secondary Predictions (Optional) ---
+    secondary_predictions = None
+    if args.secondary_predictions:
+        try:
+            secondary_path = Path(args.secondary_predictions)
+            if not secondary_path.exists():
+                raise FileNotFoundError(f"Secondary predictions file not found: {secondary_path}")
+            logger.info(f"Loading secondary predictions from: {secondary_path}")
+            with h5py.File(secondary_path, 'r') as f:
+                # Assuming the dataset is named 'predictions' as per the plan
+                if 'predictions' not in f:
+                    raise KeyError("Dataset 'predictions' not found in secondary predictions file.")
+                secondary_predictions = f['predictions'][:]
+            logger.info(f"Successfully loaded {len(secondary_predictions)} secondary predictions.")
+            if len(secondary_predictions) != dataset_len:
+                logger.warning(
+                    f"Mismatch in sample count between primary data ({dataset_len}) and "
+                    f"secondary predictions ({len(secondary_predictions)}). Ensure they correspond."
+                )
+        except Exception as e:
+            logger.error(f"Failed to load secondary predictions: {e}", exc_info=True)
+            sys.exit(1)
+
     # --- Run Interpretation Loop (Subtask 28.4) ---
     all_attributions = []
     all_coordinates = [] # Store coordinates corresponding to attributions
@@ -395,7 +425,8 @@ def interpret_main(args):
                  predictions=final_predictions,
                  actuals=final_actuals,
                  coordinates=all_coordinates,
-                 config=config # Pass full config if needed for plots
+                 config=config, # Pass full config if needed for plots
+                 secondary_predictions=secondary_predictions # Pass secondary predictions
              )
         else:
              logger.info("Skipping plot generation as per config.")

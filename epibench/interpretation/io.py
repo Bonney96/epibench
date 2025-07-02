@@ -254,7 +254,8 @@ def generate_and_save_plots(output_dir: Union[str, Path],
                             predictions: np.ndarray,
                             actuals: np.ndarray,
                             coordinates: List[Dict[str, Any]],
-                            config: Any): # Use actual InterpretConfig type hint if possible
+                            config: Any,
+                            secondary_predictions: Optional[np.ndarray] = None): # Use actual InterpretConfig type hint if possible
     """Generates and saves visualization plots for attributions.
 
     Creates a multi-panel plot showing:
@@ -337,6 +338,28 @@ def generate_and_save_plots(output_dir: Union[str, Path],
         start = sample_coords['start']
         end = sample_coords['end']
 
+        # --- Prepare Title ---
+        title_parts = [
+            f"Feature Importance - Sample {i}",
+            f"Region: {chrom}:{start}-{end}",
+            f"Actual: {true_score.item():.3f}",
+            f"AML Pred: {pred_score.item():.3f}"
+        ]
+        title_color = 'black'
+        
+        # Comparative analysis if secondary predictions are available
+        if secondary_predictions is not None and i < len(secondary_predictions):
+            secondary_pred_score = secondary_predictions[i]
+            diff = pred_score.item() - secondary_pred_score.item()
+            title_parts.append(f"CD34 Pred: {secondary_pred_score.item():.3f} (Diff: {diff:+.3f})")
+            
+            # Check for DMR
+            if abs(diff) > 0.3:
+                title_color = 'red'
+                title_parts[0] += " - DMR"
+
+        final_title = " | ".join(title_parts)
+
         try:
             # Fetch ground truth histone data using the utility function
             ground_truth_histones = get_histone_data(
@@ -358,7 +381,7 @@ def generate_and_save_plots(output_dir: Union[str, Path],
             fig, axes = plt.subplots(3, 1, figsize=(15, 2 + 0.6 * num_channels_to_plot_attr + 0.6 * num_histone_channels_gt), 
                                      sharex=True, gridspec_kw={'height_ratios': height_ratios})
             
-            fig.suptitle(f"Feature Importance - Sample {i}\nRegion: {chrom}:{start}-{end} | Actual: {true_score.item():.3f}, Predicted: {pred_score.item():.3f}", fontsize=14)
+            fig.suptitle(final_title, fontsize=14, color=title_color)
 
             # --- 1. Attribution Heatmap --- #
             ax1 = axes[0]
